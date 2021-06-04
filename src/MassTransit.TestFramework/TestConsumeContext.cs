@@ -1,16 +1,4 @@
-﻿// Copyright 2007-2015 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.TestFramework
+﻿namespace MassTransit.TestFramework
 {
     using System;
     using System.Collections.Generic;
@@ -21,10 +9,47 @@ namespace MassTransit.TestFramework
     using System.Threading.Tasks;
     using Context;
     using GreenPipes;
-    using GreenPipes.Payloads;
     using GreenPipes.Util;
-    using Pipeline.Observables;
+    using Logging;
     using Transports;
+    using Transports.InMemory;
+    using Transports.InMemory.Builders;
+    using Transports.InMemory.Configuration;
+    using Transports.InMemory.Contexts;
+    using Transports.InMemory.Topology.Topologies;
+
+
+    public static class TestConsumeContext
+    {
+        static InMemoryReceiveEndpointContext _receiveEndpointContext;
+
+        static InMemoryReceiveEndpointContext Build()
+        {
+            var topologyConfiguration = new InMemoryTopologyConfiguration(InMemoryBus.MessageTopology);
+            IInMemoryBusConfiguration busConfiguration = new InMemoryBusConfiguration(topologyConfiguration, null);
+
+            var receiveEndpointConfiguration = busConfiguration.HostConfiguration.CreateReceiveEndpointConfiguration("input-queue");
+
+            var hostTopology = new InMemoryHostTopology(busConfiguration.HostConfiguration, topologyConfiguration);
+            var host = new InMemoryHost(busConfiguration.HostConfiguration, hostTopology);
+
+            var builder = new InMemoryReceiveEndpointBuilder(busConfiguration.HostConfiguration, receiveEndpointConfiguration);
+
+            if (LogContext.Current == null)
+            {
+                var loggerFactory = new TestOutputLoggerFactory(true);
+
+                LogContext.ConfigureCurrentLogContext(loggerFactory);
+            }
+
+            return builder.CreateReceiveEndpointContext();
+        }
+
+        public static InMemoryReceiveEndpointContext GetContext()
+        {
+            return _receiveEndpointContext ??= Build();
+        }
+    }
 
 
     public class TestConsumeContext<TMessage> :
@@ -32,10 +57,7 @@ namespace MassTransit.TestFramework
         ConsumeContext<TMessage>
         where TMessage : class
     {
-        ReceiveContext _receiveContext;
-
         public TestConsumeContext(TMessage message)
-            : base(new PayloadCache())
         {
             Message = message;
 
@@ -43,7 +65,7 @@ namespace MassTransit.TestFramework
             SourceAddress = new Uri("loopback://localhost/input_queue");
             DestinationAddress = new Uri("loopback://localhost/input_queue");
 
-            _receiveContext = new TestReceiveContext(SourceAddress);
+            ReceiveContext = new TestReceiveContext(TestConsumeContext.GetContext());
         }
 
         public Guid? MessageId { get; }
@@ -123,20 +145,11 @@ namespace MassTransit.TestFramework
             throw new NotImplementedException();
         }
 
-        public ReceiveContext ReceiveContext
-        {
-            get { return _receiveContext; }
-        }
+        public ReceiveContext ReceiveContext { get; }
 
-        public Task ConsumeCompleted
-        {
-            get { return Task.FromResult(true); }
-        }
+        public Task ConsumeCompleted => Task.FromResult(true);
 
-        public IEnumerable<string> SupportedMessageTypes
-        {
-            get { return Enumerable.Repeat(MessageUrn.ForType(typeof(TMessage)).ToString(), 1); }
-        }
+        public IEnumerable<string> SupportedMessageTypes => Enumerable.Repeat(MessageUrn.ForTypeString<TMessage>(), 1);
 
         public bool HasMessageType(Type messageType)
         {
@@ -152,10 +165,10 @@ namespace MassTransit.TestFramework
 
         public void AddConsumeTask(Task task)
         {
-
         }
 
-        public Task RespondAsync<T>(T message) where T : class
+        public Task RespondAsync<T>(T message)
+            where T : class
         {
             throw new NotImplementedException();
         }
@@ -165,27 +178,32 @@ namespace MassTransit.TestFramework
             throw new NotImplementedException();
         }
 
-        public Task RespondAsync<T>(object values) where T : class
+        public Task RespondAsync<T>(object values)
+            where T : class
         {
             throw new NotImplementedException();
         }
 
-        public Task RespondAsync<T>(object values, IPipe<SendContext<T>> sendPipe) where T : class
+        public Task RespondAsync<T>(object values, IPipe<SendContext<T>> sendPipe)
+            where T : class
         {
             throw new NotImplementedException();
         }
 
-        public Task RespondAsync<T>(object values, IPipe<SendContext> sendPipe) where T : class
+        public Task RespondAsync<T>(object values, IPipe<SendContext> sendPipe)
+            where T : class
         {
             throw new NotImplementedException();
         }
 
-        public Task RespondAsync<T>(T message, IPipe<SendContext<T>> sendPipe) where T : class
+        public Task RespondAsync<T>(T message, IPipe<SendContext<T>> sendPipe)
+            where T : class
         {
             throw new NotImplementedException();
         }
 
-        public Task RespondAsync<T>(T message, IPipe<SendContext> sendPipe) where T : class
+        public Task RespondAsync<T>(T message, IPipe<SendContext> sendPipe)
+            where T : class
         {
             throw new NotImplementedException();
         }
@@ -205,7 +223,8 @@ namespace MassTransit.TestFramework
             throw new NotImplementedException();
         }
 
-        public void Respond<T>(T message) where T : class
+        public void Respond<T>(T message)
+            where T : class
         {
             throw new NotImplementedException();
         }
@@ -215,7 +234,8 @@ namespace MassTransit.TestFramework
             throw new NotImplementedException();
         }
 
-        public async Task NotifyConsumed<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType) where T : class
+        public async Task NotifyConsumed<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType)
+            where T : class
         {
         }
 
@@ -248,11 +268,11 @@ namespace MassTransit.TestFramework
     }
 
 
-    public class TestReceiveContext : 
+    public class TestReceiveContext :
         BaseReceiveContext
     {
-        public TestReceiveContext(Uri sourceAddress)
-            : base(sourceAddress, false, null)
+        public TestReceiveContext(ReceiveEndpointContext receiveEndpointContext)
+            : base(false, receiveEndpointContext)
         {
             HeaderProvider = new DictionaryHeaderProvider(new Dictionary<string, object>());
         }

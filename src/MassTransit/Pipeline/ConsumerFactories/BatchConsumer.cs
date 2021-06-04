@@ -1,16 +1,4 @@
-﻿// Copyright 2007-2018 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the
-// License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.Pipeline.ConsumerFactories
+﻿namespace MassTransit.Pipeline.ConsumerFactories
 {
     using System;
     using System.Collections;
@@ -20,39 +8,38 @@ namespace MassTransit.Pipeline.ConsumerFactories
     using System.Threading.Tasks;
     using Context;
     using GreenPipes;
+    using Util;
 
 
-    public class BatchConsumer<TConsumer, TMessage> :
+    public class BatchConsumer<TMessage> :
         IConsumer<TMessage>
         where TMessage : class
-        where TConsumer : class
     {
         readonly TaskCompletionSource<DateTime> _completed;
-        readonly IConsumerFactory<TConsumer> _consumerFactory;
-        readonly IPipe<ConsumerConsumeContext<TConsumer, Batch<TMessage>>> _consumerPipe;
+        readonly IPipe<ConsumeContext<Batch<TMessage>>> _consumerPipe;
+        readonly ChannelExecutor _dispatcher;
+        readonly ChannelExecutor _executor;
         readonly DateTime _firstMessage;
         readonly int _messageLimit;
-        readonly TaskScheduler _taskScheduler;
         readonly SortedDictionary<Guid, ConsumeContext<TMessage>> _messages;
         readonly Timer _timer;
-        bool _isCompleted;
         DateTime _lastMessage;
 
-        public BatchConsumer(int messageLimit, TimeSpan timeLimit, TaskScheduler taskScheduler, IConsumerFactory<TConsumer> consumerFactory,
-            IPipe<ConsumerConsumeContext<TConsumer, Batch<TMessage>>> consumerPipe)
+        public BatchConsumer(int messageLimit, TimeSpan timeLimit, ChannelExecutor executor, ChannelExecutor dispatcher,
+            IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe)
         {
             _messageLimit = messageLimit;
-            _taskScheduler = taskScheduler;
-            _consumerFactory = consumerFactory;
+            _executor = executor;
             _consumerPipe = consumerPipe;
+            _dispatcher = dispatcher;
             _messages = new SortedDictionary<Guid, ConsumeContext<TMessage>>();
-            _completed = new TaskCompletionSource<DateTime>();
+            _completed = TaskUtil.GetTask<DateTime>();
             _firstMessage = DateTime.UtcNow;
 
-            _timer = new Timer(TimeLimitExpired, null, timeLimit, TimeSpan.Zero);
+            _timer = new Timer(TimeLimitExpired, null, timeLimit, TimeSpan.FromMilliseconds(-1));
         }
 
-        public bool IsCompleted => _isCompleted;
+        public bool IsCompleted { get; private set; }
 
         async Task IConsumer<TMessage>.Consume(ConsumeContext<TMessage> context)
         {
@@ -76,21 +63,23 @@ namespace MassTransit.Pipeline.ConsumerFactories
 
         void TimeLimitExpired(object state)
         {
-            Task.Factory.StartNew(() =>
+            Task.Run(() => _executor.Push(() =>
             {
-                _isCompleted = true;
+                if (IsCompleted)
+                    return TaskUtil.Completed;
 
-                if (_messages.Count > 0)
-                {
-                    List<ConsumeContext<TMessage>> messages = _messages.Values.ToList();
+                IsCompleted = true;
 
-                    Deliver(messages[0], messages, BatchCompletionMode.Time);
-                }
+                if (_messages.Count <= 0)
+                    return TaskUtil.Completed;
 
-            }, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
+                List<ConsumeContext<TMessage>> messages = GetMessageBatchInOrder();
+
+                return _dispatcher.Push(() => Deliver(messages[0], messages, BatchCompletionMode.Time));
+            }));
         }
 
-        public void Add(ConsumeContext<TMessage> context)
+        public Task Add(ConsumeContext<TMessage> context)
         {
             var messageId = context.MessageId ?? NewId.NextGuid();
             _messages.Add(messageId, context);
@@ -99,13 +88,17 @@ namespace MassTransit.Pipeline.ConsumerFactories
 
             if (IsReadyToDeliver(context))
             {
-                _isCompleted = true;
+                IsCompleted = true;
 
-                Deliver(context, _messages.Values.ToList(), BatchCompletionMode.Size);
+                List<ConsumeContext<TMessage>> messageList = GetMessageBatchInOrder();
+
+                return _dispatcher.Push(() => Deliver(context, messageList, BatchCompletionMode.Size));
             }
+
+            return TaskUtil.Completed;
         }
 
-        bool IsReadyToDeliver(ConsumeContext<TMessage> context)
+        bool IsReadyToDeliver(ConsumeContext context)
         {
             if (context.GetRetryAttempt() > 0)
                 return true;
@@ -113,28 +106,27 @@ namespace MassTransit.Pipeline.ConsumerFactories
             return _messages.Count == _messageLimit;
         }
 
-        public void ForceComplete()
+        public Task ForceComplete()
         {
-            _isCompleted = true;
+            IsCompleted = true;
 
-            List<ConsumeContext<TMessage>> consumeContexts = _messages.Values.ToList();
-            if (consumeContexts.Count == 0)
-                return;
-
-            Deliver(consumeContexts.Last(), consumeContexts, BatchCompletionMode.Forced);
+            List<ConsumeContext<TMessage>> consumeContexts = GetMessageBatchInOrder();
+            return consumeContexts.Count == 0
+                ? TaskUtil.Completed
+                : _dispatcher.Push(() => Deliver(consumeContexts.Last(), consumeContexts, BatchCompletionMode.Forced));
         }
 
-        async void Deliver(ConsumeContext context, IReadOnlyList<ConsumeContext<TMessage>> messages, BatchCompletionMode batchCompletionMode)
+        async Task Deliver(ConsumeContext context, IReadOnlyList<ConsumeContext<TMessage>> messages, BatchCompletionMode batchCompletionMode)
         {
             _timer.Dispose();
 
             Batch<TMessage> batch = new Batch(_firstMessage, _lastMessage, batchCompletionMode, messages);
 
+            ConsumeContext<Batch<TMessage>> batchConsumeContext = new BatchConsumeContext<TMessage>(context, batch);
+
             try
             {
-                var proxy = new MessageConsumeContext<Batch<TMessage>>(context, batch);
-
-                await _consumerFactory.Send(proxy, _consumerPipe).ConfigureAwait(false);
+                await _consumerPipe.Send(batchConsumeContext).ConfigureAwait(false);
 
                 _completed.TrySetResult(DateTime.UtcNow);
             }
@@ -144,8 +136,21 @@ namespace MassTransit.Pipeline.ConsumerFactories
             }
             catch (Exception exception)
             {
+                if (batchConsumeContext.TryGetPayload(out RetryContext<ConsumeContext<Batch<TMessage>>> retryContext))
+                {
+                    for (var i = 0; i < messages.Count; i++)
+                        messages[i].GetOrAddPayload(() => retryContext);
+                }
+
                 _completed.TrySetException(exception);
             }
+        }
+
+        List<ConsumeContext<TMessage>> GetMessageBatchInOrder()
+        {
+            return _messages.Values
+                .OrderBy(x => x.SentTime ?? x.MessageId?.ToNewId().Timestamp ?? default)
+                .ToList();
         }
 
 

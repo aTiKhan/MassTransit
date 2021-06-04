@@ -1,62 +1,47 @@
-// Copyright 2007-2017 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
 namespace MassTransit.Transports.InMemory.Builders
 {
-    using System.Linq;
     using Configuration;
-    using Context;
     using Contexts;
     using GreenPipes;
     using MassTransit.Builders;
+    using Pipeline;
+    using Topology.Configurators;
 
 
     public class InMemoryReceiveEndpointBuilder :
-        ReceiveEndpointBuilder,
-        IReceiveEndpointBuilder
+        ReceiveEndpointBuilder
     {
-        readonly IInMemoryHostControl _host;
         readonly IInMemoryReceiveEndpointConfiguration _configuration;
+        readonly IInMemoryHostConfiguration _hostConfiguration;
 
-        public InMemoryReceiveEndpointBuilder(IInMemoryHostControl host, IInMemoryReceiveEndpointConfiguration configuration)
+        public InMemoryReceiveEndpointBuilder(IInMemoryHostConfiguration hostConfiguration, IInMemoryReceiveEndpointConfiguration configuration)
             : base(configuration)
         {
-            _host = host;
+            _hostConfiguration = hostConfiguration;
             _configuration = configuration;
         }
 
-        public override ConnectHandle ConnectConsumePipe<T>(IPipe<ConsumeContext<T>> pipe)
+        public override ConnectHandle ConnectConsumePipe<T>(IPipe<ConsumeContext<T>> pipe, ConnectPipeOptions options)
         {
-            _configuration.Topology.Consume
-                .GetMessageTopology<T>()
-                .Bind();
+            if (_configuration.ConfigureConsumeTopology && options.HasFlag(ConnectPipeOptions.ConfigureConsumeTopology))
+            {
+                IInMemoryMessageConsumeTopologyConfigurator<T> topology = _configuration.Topology.Consume.GetMessageTopology<T>();
+                if (topology.ConfigureConsumeTopology)
+                    topology.Bind();
+            }
 
-            return base.ConnectConsumePipe(pipe);
+            return base.ConnectConsumePipe(pipe, options);
         }
 
-        public ReceiveEndpointContext CreateReceiveEndpointContext()
+        public InMemoryReceiveEndpointContext CreateReceiveEndpointContext()
         {
-            var builder = _host.CreateConsumeTopologyBuilder();
+            var context = new TransportInMemoryReceiveEndpointContext(_hostConfiguration, _configuration);
 
-            var queueName = _configuration.InputAddress.AbsolutePath.Split('/').Last();
+            context.GetOrAddPayload(() => _hostConfiguration.HostTopology);
 
-            builder.Queue = queueName;
-            builder.QueueDeclare(queueName, _configuration.ConcurrencyLimit);
-            builder.Exchange = queueName;
-            builder.QueueBind(builder.Exchange, builder.Queue);
+            context.ConfigureTopology();
 
-            _configuration.Topology.Consume.Apply(builder);
-
-            return new InMemoryReceiveEndpointContext(_configuration, _host);
+            return context;
         }
     }
 }

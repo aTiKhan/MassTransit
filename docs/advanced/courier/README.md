@@ -1,6 +1,6 @@
 # Using Courier
 
-Developing applications using a distributed, message-based architecture significantly increases the complexity of performing operations transactionally, where an end-to-end set of steps must be completed entirely, or not at all. In an application using an ACID database, this is typically done using SQL transactions, where partial operations are rolled back if the transaction cannot be completed. However, this doesn't scale when the steps being to include dependencies outside of a single database. And in the distributed, *microservices* based architectures, the use of a single ACID database is shrinking to completely non-existent.
+Developing applications using a distributed, message-based architecture significantly increases the complexity of performing transactions, where an end-to-end set of steps must be completed entirely, or not at all. In an application using an ACID database, this is typically done using SQL transactions, where partial operations are rolled back if the transaction cannot be completed. However, this doesn't scale when the steps being to include dependencies outside of a single database. And in the distributed, *microservices* based architectures, the use of a single ACID database is shrinking to completely non-existent.
 
 MassTransit Courier is a mechanism for creating and executing distributed transactions with fault compensation that can be used to meet the requirements previously within the domain of database transactions, but built to scale across a large system of distributed services. Courier also works well with MassTransit sagas, which add transaction monitoring and recoverability.
 
@@ -12,15 +12,16 @@ A key advantage to using a routing slip is it allows the activities to vary for 
 
 ## MassTransit Courier
 
-MassTransit Courier is a framework that implements the routing slip pattern. Leveraging a durable messaging transport and the advanced saga features of MassTransit, Courier provides a powerful set of components to simplify the use of routing slips in distributed applications. Combining the routing slip pattern with a state machine such as [Automatonymous](https://github.com/phatboyg/Automatonymous) results in a reliable, recoverable, and supportable approach for coordinating and monitoring message processing across multiple services.
+MassTransit Courier is a framework that implements the routing slip pattern. Leveraging a durable messaging transport and the advanced saga features of MassTransit, Courier provides a powerful set of components to simplify the use of routing slips in distributed applications. Combining the routing slip pattern with a state machine such as [Automatonymous][2]results in a reliable, recoverable, and supportable approach for coordinating and monitoring message processing across multiple services.
 
 In addition to the basic routing slip pattern, MassTransit Courier also supports [compensations][1] which allow activities to store execution data so that reversible operations can be undone, using either a traditional rollback mechanism or by applying an offsetting operation. For example, an activity that holds a seat for a patron could release the held seat when compensated.
 
-* [Activities](activities.md)
-* [Builder](builder.md)
-* [Execution](execute.md)
-* [Events](events.md)
-* [Subscriptions](subscriptions.md)
+* [Activities](activities)
+* [Builder](builder)
+* [Execution](execute)
+* [Events](events)
+* [Subscriptions](subscriptions)
     
 
 [1]: http://en.wikipedia.org/wiki/Compensation_%28engineering%29
+[2]: https://github.com/MassTransit/Automatonymous

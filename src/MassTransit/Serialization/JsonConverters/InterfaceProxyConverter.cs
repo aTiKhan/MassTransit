@@ -2,8 +2,8 @@
 {
     using System;
     using System.Reflection;
+    using Metadata;
     using Newtonsoft.Json;
-    using Util;
 
 
     public class InterfaceProxyConverter :

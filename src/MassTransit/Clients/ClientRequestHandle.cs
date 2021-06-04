@@ -1,16 +1,4 @@
-﻿// Copyright 2007-2018 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the
-// License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.Clients
+﻿namespace MassTransit.Clients
 {
     using System;
     using System.Collections.Generic;
@@ -20,6 +8,7 @@ namespace MassTransit.Clients
     using GreenPipes;
     using GreenPipes.Builders;
     using GreenPipes.Configurators;
+    using Metadata;
     using Util;
 
 
@@ -28,29 +17,32 @@ namespace MassTransit.Clients
         IPipe<SendContext<TRequest>>
         where TRequest : class
     {
+        public delegate Task<TRequest> SendRequestCallback(Guid requestId, IPipe<SendContext<TRequest>> pipe, CancellationToken cancellationToken);
+
+
+        readonly IList<string> _accept;
         readonly CancellationToken _cancellationToken;
+        readonly CancellationTokenSource _cancellationTokenSource;
         readonly ClientFactoryContext _context;
-        readonly Task<TRequest> _message;
+        readonly TaskCompletionSource<TRequest> _message;
         readonly IBuildPipeConfigurator<SendContext<TRequest>> _pipeConfigurator;
         readonly TaskCompletionSource<bool> _readyToSend;
         readonly Guid _requestId;
-        readonly IRequestSendEndpoint<TRequest> _requestSendEndpoint;
         readonly Dictionary<Type, HandlerConnectHandle> _responseHandlers;
         readonly Task _send;
         readonly TaskCompletionSource<SendContext<TRequest>> _sendContext;
-        readonly CancellationTokenSource _cancellationTokenSource;
+        readonly SendRequestCallback _sendRequestCallback;
         readonly TaskScheduler _taskScheduler;
+        int _faultedOrCanceled;
         CancellationTokenRegistration _registration;
         Timer _timeoutTimer;
-        int _faultedOrCanceled;
         RequestTimeout _timeToLive;
 
-        public ClientRequestHandle(ClientFactoryContext context, IRequestSendEndpoint<TRequest> requestSendEndpoint, Task<TRequest> message,
-            CancellationToken cancellationToken = default, RequestTimeout timeout = default, Guid? requestId = default, TaskScheduler taskScheduler = default)
+        public ClientRequestHandle(ClientFactoryContext context, SendRequestCallback sendRequestCallback, CancellationToken cancellationToken = default,
+            RequestTimeout timeout = default, Guid? requestId = default, TaskScheduler taskScheduler = default)
         {
             _context = context;
-            _message = message;
-            _requestSendEndpoint = requestSendEndpoint;
+            _sendRequestCallback = sendRequestCallback;
             _cancellationToken = cancellationToken;
 
             var requestTimeout = timeout.HasValue ? timeout : _context.DefaultTimeout.HasValue ? _context.DefaultTimeout.Value : RequestTimeout.Default;
@@ -63,11 +55,13 @@ namespace MassTransit.Clients
                     ? TaskScheduler.Default
                     : TaskScheduler.FromCurrentSynchronizationContext());
 
+            _message = new TaskCompletionSource<TRequest>();
             _pipeConfigurator = new PipeConfigurator<SendContext<TRequest>>();
-            _sendContext = new TaskCompletionSource<SendContext<TRequest>>();
-            _readyToSend = new TaskCompletionSource<bool>();
+            _sendContext = TaskUtil.GetTask<SendContext<TRequest>>();
+            _readyToSend = TaskUtil.GetTask<bool>();
             _cancellationTokenSource = new CancellationTokenSource();
             _responseHandlers = new Dictionary<Type, HandlerConnectHandle>();
+            _accept = new List<string>();
 
             if (cancellationToken != default && cancellationToken.CanBeCanceled)
                 _registration = cancellationToken.Register(Cancel);
@@ -86,8 +80,10 @@ namespace MassTransit.Clients
             context.RequestId = _requestId;
             context.ResponseAddress = _context.ResponseAddress;
 
+            context.Headers.Set(MessageHeaders.Request.Accept, _accept);
+
             if (_timeToLive.HasValue)
-                context.TimeToLive = _timeToLive.Value;
+                context.TimeToLive ??= _timeToLive.Value;
 
             IPipe<SendContext<TRequest>> pipe = _pipeConfigurator.Build();
 
@@ -125,6 +121,8 @@ namespace MassTransit.Clients
         {
             Task<Response<T>> response = Response<T>();
 
+            AcceptResponse<T>();
+
             if (readyToSend)
                 _readyToSend.TrySetResult(true);
 
@@ -137,15 +135,21 @@ namespace MassTransit.Clients
                 CancelAndDispose();
         }
 
-        Task<TRequest> RequestHandle<TRequest>.Message => _message;
+        Task<TRequest> RequestHandle<TRequest>.Message => _message.Task;
+
+        void AcceptResponse<T>()
+            where T : class
+        {
+            _accept.Add(MessageUrn.ForTypeString<T>());
+        }
 
         async Task SendRequest()
         {
             try
             {
-                var message = await _message.ConfigureAwait(false);
+                var message = await _sendRequestCallback(_requestId, this, _cancellationTokenSource.Token).ConfigureAwait(false);
 
-                await _requestSendEndpoint.Send(message, this, _cancellationTokenSource.Token).ConfigureAwait(false);
+                _message.TrySetResult(message);
             }
             catch (RequestException exception)
             {
@@ -175,39 +179,35 @@ namespace MassTransit.Clients
         Task<Response<T>> Response<T>(MessageHandler<T> handler = null, Action<IHandlerConfigurator<T>> configure = null)
             where T : class
         {
-            lock (_responseHandlers)
-            {
-                if (_responseHandlers.ContainsKey(typeof(T)))
-                    throw new RequestException($"Only one handler of type {TypeMetadataCache<T>.ShortName} can be registered");
-            }
+            if (_responseHandlers.ContainsKey(typeof(T)))
+                throw new RequestException($"Only one handler of type {TypeMetadataCache<T>.ShortName} can be registered");
 
             var configurator = new ResponseHandlerConfigurator<T>(_taskScheduler, handler, _send);
 
             configure?.Invoke(configurator);
 
-            lock (_responseHandlers)
-            {
-                if (_cancellationToken.IsCancellationRequested)
-                    return TaskUtil.Cancelled<Response<T>>();
+            if (_cancellationToken.IsCancellationRequested)
+                return TaskUtil.Cancelled<Response<T>>();
 
-                HandlerConnectHandle<T> handle = configurator.Connect(_context, _requestId);
+            HandlerConnectHandle<T> handle = configurator.Connect(_context, _requestId);
 
-                _responseHandlers.Add(typeof(T), handle);
+            _responseHandlers.Add(typeof(T), handle);
 
-                return handle.Task;
-            }
+            return handle.Task;
         }
 
-        async Task HandleFault()
+        void HandleFault()
         {
-            try
-            {
-                var response = await Response<Fault<TRequest>>(FaultHandler).ConfigureAwait(false);
-            }
-            catch
-            {
-                // need to observe the exception, if it is faulted
-            }
+            if (_cancellationToken.IsCancellationRequested)
+                return;
+
+            Task MessageHandler(ConsumeContext<Fault<TRequest>> context) => FaultHandler(context);
+
+            var connectHandle = _context.ConnectRequestHandler(_requestId, MessageHandler, new PipeConfigurator<ConsumeContext<Fault<TRequest>>>());
+
+            var handle = new FaultHandlerConnectHandle(connectHandle);
+
+            _responseHandlers.Add(typeof(Fault<TRequest>), handle);
         }
 
         Task FaultHandler(ConsumeContext<Fault<TRequest>> context)
@@ -234,18 +234,19 @@ namespace MassTransit.Clients
                 DisposeTimer();
 
                 _readyToSend.TrySetException(exception);
-                _sendContext.TrySetException(exception);
 
-                lock (_responseHandlers)
+                var wasSet = _sendContext.TrySetException(exception);
+
+                _message.TrySetException(exception);
+
+                foreach (var handle in _responseHandlers.Values)
                 {
-                    foreach (var handle in _responseHandlers.Values)
-                    {
-                        handle.TrySetException(exception);
-                        handle.Disconnect();
-                    }
+                    handle.TrySetException(exception);
+                    handle.Disconnect();
                 }
 
-                _cancellationTokenSource.Cancel();
+                if (wasSet)
+                    _cancellationTokenSource.Cancel();
             }
 
             Task.Factory.StartNew(HandleFail, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
@@ -257,19 +258,21 @@ namespace MassTransit.Clients
 
             DisposeTimer();
 
-            _readyToSend.TrySetCanceled();
-            _sendContext.TrySetCanceled();
-
-            lock (_responseHandlers)
-            {
-                foreach (var handle in _responseHandlers.Values)
-                {
-                    handle.TrySetCanceled();
-                    handle.Disconnect();
-                }
-            }
-
             _cancellationTokenSource.Cancel();
+
+            var cancellationToken = _cancellationToken.IsCancellationRequested ? _cancellationToken : _cancellationTokenSource.Token;
+
+            _readyToSend.TrySetCanceled(cancellationToken);
+
+            _sendContext.TrySetCanceled(cancellationToken);
+
+            _message.TrySetCanceled();
+
+            foreach (var handle in _responseHandlers.Values)
+            {
+                handle.TrySetCanceled(cancellationToken);
+                handle.Disconnect();
+            }
         }
 
         void TimeoutExpired(object state)

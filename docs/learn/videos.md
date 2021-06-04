@@ -1,6 +1,12 @@
 # Videos
 
-There are several videos of presentations featuring MassTransit.
+### YouTube
+
+There are several seasons of videos [available on YouTube](https://www.youtube.com/playlist?list=PLx8uyNNs1ri2MBx6BjPum5j9_MMdIfM9C), and new episodes are added fairly regularly. There are also many short-format [Commutes](https://youtube.com/playlist?list=PLx8uyNNs1ri2_ldsW1aPb7_8E2FI7ZtaI) that cover quick topics.
+
+### Others
+
+Beyond those videos, there are several other video presentations featuring MassTransit.
 
 [Event Driven Architecture][1]
 Presented at the North Dallas .NET User Group in February, 2010 by Chris Patterson.

@@ -1,19 +1,8 @@
-﻿// Copyright 2007-2017 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.SagaConfigurators
+﻿namespace MassTransit.SagaConfigurators
 {
     using System;
     using System.Collections.Generic;
+    using Configuration;
     using GreenPipes;
     using Saga;
     using Saga.Connectors;
@@ -50,12 +39,6 @@ namespace MassTransit.SagaConfigurators
                 yield return result;
         }
 
-        public void ConfigureMessage<T>(Action<ISagaMessageConfigurator<T>> configure)
-            where T : class
-        {
-            _specification.Message(configure);
-        }
-
         public void Message<T>(Action<ISagaMessageConfigurator<T>> configure)
             where T : class
         {
@@ -76,6 +59,30 @@ namespace MassTransit.SagaConfigurators
         public ConnectHandle ConnectSagaConfigurationObserver(ISagaConfigurationObserver observer)
         {
             return _specification.ConnectSagaConfigurationObserver(observer);
+        }
+
+        public T Options<T>(Action<T> configure)
+            where T : IOptions, new()
+        {
+            return _specification.Options(configure);
+        }
+
+        public T Options<T>(T options, Action<T> configure)
+            where T : IOptions
+        {
+            return _specification.Options(options, configure);
+        }
+
+        public bool TryGetOptions<T>(out T options)
+            where T : IOptions
+        {
+            return _specification.TryGetOptions(out options);
+        }
+
+        public IEnumerable<T> SelectOptions<T>()
+            where T : class
+        {
+            return _specification.SelectOptions<T>();
         }
     }
 }

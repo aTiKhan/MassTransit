@@ -14,14 +14,31 @@ namespace MassTransit.Definition
 
         public string GetEndpointName(IEndpointNameFormatter formatter)
         {
-            return _endpointName ?? (_endpointName = string.IsNullOrWhiteSpace(_settings.Name)
-                ? FormatEndpointName(formatter)
-                : _settings.Name);
+            string FormatName()
+            {
+                return string.IsNullOrWhiteSpace(_settings.Name)
+                    ? FormatEndpointName(formatter)
+                    : _settings.Name;
+            }
+
+            string GetSeparator()
+            {
+                return formatter switch
+                {
+                    SnakeCaseEndpointNameFormatter f => f.Separator,
+                    _ => ""
+                };
+            }
+
+            return _endpointName ??= string.IsNullOrWhiteSpace(_settings.InstanceId)
+                ? FormatName()
+                : formatter.SanitizeName(FormatName() + GetSeparator() + _settings.InstanceId);
         }
 
         public bool IsTemporary => _settings.IsTemporary;
         public int? PrefetchCount => _settings.PrefetchCount;
         public int? ConcurrentMessageLimit => _settings.ConcurrentMessageLimit;
+        public bool ConfigureConsumeTopology => _settings.ConfigureConsumeTopology;
 
         public void Configure<T>(T configurator)
             where T : IReceiveEndpointConfigurator

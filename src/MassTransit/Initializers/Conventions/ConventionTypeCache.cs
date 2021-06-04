@@ -2,16 +2,16 @@ namespace MassTransit.Initializers.Conventions
 {
     using System;
     using System.Collections.Concurrent;
-    using Util;
+    using Metadata;
 
 
     public class ConventionTypeCache<TValue> :
         IConventionTypeCache<TValue>
         where TValue : class
     {
+        readonly IInitializerConvention _convention;
         readonly ConcurrentDictionary<Type, Cached> _dictionary;
         readonly IConventionTypeCacheFactory<TValue> _typeFactory;
-        readonly IInitializerConvention _convention;
 
         public ConventionTypeCache(IConventionTypeCacheFactory<TValue> typeFactory, IInitializerConvention convention)
         {

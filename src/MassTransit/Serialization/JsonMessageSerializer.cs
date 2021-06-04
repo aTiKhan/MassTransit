@@ -7,9 +7,9 @@ namespace MassTransit.Serialization
     using System.Text;
     using System.Threading;
     using JsonConverters;
+    using Metadata;
     using Newtonsoft.Json;
     using Newtonsoft.Json.Serialization;
-    using Util;
 
 
     public class JsonMessageSerializer :
@@ -23,7 +23,7 @@ namespace MassTransit.Serialization
         static readonly Lazy<JsonSerializer> _serializer;
 
         public static readonly ByteArrayConverter ByteArrayConverter;
-        public static readonly ListJsonConverter ListJsonConverter;
+        public static readonly CaseInsensitiveDictionaryJsonConverter CaseInsensitiveDictionaryJsonConverter;
         public static readonly InterfaceProxyConverter InterfaceProxyConverter;
         public static readonly MessageDataJsonConverter MessageDataJsonConverter;
         public static readonly StringDecimalConverter StringDecimalConverter;
@@ -34,14 +34,17 @@ namespace MassTransit.Serialization
         static JsonMessageSerializer()
         {
             ByteArrayConverter = new ByteArrayConverter();
-            ListJsonConverter = new ListJsonConverter();
+            CaseInsensitiveDictionaryJsonConverter = new CaseInsensitiveDictionaryJsonConverter();
             InterfaceProxyConverter = new InterfaceProxyConverter();
             MessageDataJsonConverter = new MessageDataJsonConverter();
             StringDecimalConverter = new StringDecimalConverter();
 
             var namingStrategy = new CamelCaseNamingStrategy();
 
-            DefaultContractResolver deserializerContractResolver = new JsonContractResolver(ByteArrayConverter, ListJsonConverter, InterfaceProxyConverter,
+            DefaultContractResolver deserializerContractResolver = new JsonContractResolver(
+                ByteArrayConverter,
+                CaseInsensitiveDictionaryJsonConverter,
+                InterfaceProxyConverter,
                 MessageDataJsonConverter,
                 StringDecimalConverter) {NamingStrategy = namingStrategy};
 
@@ -93,16 +96,13 @@ namespace MassTransit.Serialization
 
                 var envelope = new JsonMessageEnvelope(context, context.Message, TypeMetadataCache<T>.MessageTypeNames);
 
-                using (var writer = new StreamWriter(stream, _encoding.Value, 1024, true))
-                using (var jsonWriter = new JsonTextWriter(writer))
-                {
-                    jsonWriter.Formatting = Formatting.Indented;
+                using var writer = new StreamWriter(stream, _encoding.Value, 1024, true);
+                using var jsonWriter = new JsonTextWriter(writer) {Formatting = Formatting.Indented};
 
-                    _serializer.Value.Serialize(jsonWriter, envelope, typeof(MessageEnvelope));
+                _serializer.Value.Serialize(jsonWriter, envelope, typeof(MessageEnvelope));
 
-                    jsonWriter.Flush();
-                    writer.Flush();
-                }
+                jsonWriter.Flush();
+                writer.Flush();
             }
             catch (SerializationException)
             {

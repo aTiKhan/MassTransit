@@ -1,19 +1,9 @@
-﻿// Copyright 2007-2018 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the
-// License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.Transports.InMemory.Configuration
+﻿namespace MassTransit.Transports.InMemory.Configuration
 {
     using System;
     using Builders;
+    using Context;
+    using Contexts;
     using MassTransit.Configuration;
 
 
@@ -31,16 +21,16 @@ namespace MassTransit.Transports.InMemory.Configuration
             : base(hostConfiguration, endpointConfiguration)
         {
             _hostConfiguration = hostConfiguration;
-            _queueName = queueName;
-            _endpointConfiguration = endpointConfiguration;
 
-            HostAddress = hostConfiguration.Host.Address;
-            InputAddress = new Uri(hostConfiguration.Host.Address, $"{queueName}");
+            _queueName = queueName ?? throw new ArgumentNullException(nameof(queueName));
+            _endpointConfiguration = endpointConfiguration ?? throw new ArgumentNullException(nameof(endpointConfiguration));
+
+            HostAddress = hostConfiguration?.HostAddress ?? throw new ArgumentNullException(nameof(hostConfiguration.HostAddress));
+
+            InputAddress = new InMemoryEndpointAddress(hostConfiguration.HostAddress, queueName);
         }
 
         IInMemoryReceiveEndpointConfigurator IInMemoryReceiveEndpointConfiguration.Configurator => this;
-
-        public int ConcurrencyLimit { get; set; }
 
         IInMemoryTopologyConfiguration IInMemoryEndpointConfiguration.Topology => _endpointConfiguration.Topology;
 
@@ -48,17 +38,36 @@ namespace MassTransit.Transports.InMemory.Configuration
 
         public override Uri InputAddress { get; }
 
-        public override IReceiveEndpoint Build()
+        public override ReceiveEndpointContext CreateReceiveEndpointContext()
         {
-            var builder = new InMemoryReceiveEndpointBuilder(_hostConfiguration.Host, this);
+            return CreateInMemoryReceiveEndpointContext();
+        }
+
+        public void Build(IHost host)
+        {
+            var context = CreateInMemoryReceiveEndpointContext();
+
+            var transport = new InMemoryReceiveTransport(context, _queueName);
+
+            var receiveEndpoint = new ReceiveEndpoint(transport, context);
+
+            host.AddReceiveEndpoint(_queueName, receiveEndpoint);
+
+            ReceiveEndpoint = receiveEndpoint;
+        }
+
+        public int ConcurrencyLimit
+        {
+            set => ConcurrentMessageLimit = value;
+        }
+
+        InMemoryReceiveEndpointContext CreateInMemoryReceiveEndpointContext()
+        {
+            var builder = new InMemoryReceiveEndpointBuilder(_hostConfiguration, this);
 
             ApplySpecifications(builder);
 
-            var receiveEndpointContext = builder.CreateReceiveEndpointContext();
-
-            var transport = _hostConfiguration.Host.GetReceiveTransport(_queueName, receiveEndpointContext);
-
-            return CreateReceiveEndpoint(_queueName, transport, receiveEndpointContext);
+            return builder.CreateReceiveEndpointContext();
         }
     }
 }

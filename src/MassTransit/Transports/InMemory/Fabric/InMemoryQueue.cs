@@ -1,47 +1,43 @@
-﻿// Copyright 2007-2017 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.Transports.InMemory.Fabric
+﻿namespace MassTransit.Transports.InMemory.Fabric
 {
     using System;
     using System.Threading;
     using System.Threading.Tasks;
+    using GreenPipes;
+    using GreenPipes.Internals.Extensions;
+    using GreenPipes.Util;
     using Util;
 
 
     public class InMemoryQueue :
         IInMemoryQueue
     {
-        readonly CancellationTokenSource _cancellationToken;
         readonly TaskCompletionSource<IInMemoryQueueConsumer> _consumer;
+        readonly Connectable<IInMemoryQueueConsumer> _consumers;
+        readonly ChannelExecutor _executor;
         readonly string _name;
-        readonly LimitedConcurrencyLevelTaskScheduler _scheduler;
-        int _queueDepth;
+        readonly CancellationTokenSource _source;
 
         public InMemoryQueue(string name, int concurrencyLevel)
         {
             _name = name;
-            _scheduler = new LimitedConcurrencyLevelTaskScheduler(concurrencyLevel);
-            _cancellationToken = new CancellationTokenSource();
 
-            _consumer = new TaskCompletionSource<IInMemoryQueueConsumer>();
-            _cancellationToken.Token.Register(() => _consumer.TrySetCanceled());
+            _consumers = new Connectable<IInMemoryQueueConsumer>();
+            _consumer = Util.TaskUtil.GetTask<IInMemoryQueueConsumer>();
+            _source = new CancellationTokenSource();
+
+            _executor = new ChannelExecutor(concurrencyLevel, false);
         }
 
-        public void ConnectConsumer(IInMemoryQueueConsumer consumer)
+        public ConnectHandle ConnectConsumer(IInMemoryQueueConsumer consumer)
         {
             try
             {
-                _consumer.SetResult(consumer);
+                var handle = _consumers.Connect(consumer);
+
+                _consumer.TrySetResult(consumer);
+
+                return new ConsumerHandle(this, handle);
             }
             catch (Exception exception)
             {
@@ -51,39 +47,79 @@ namespace MassTransit.Transports.InMemory.Fabric
 
         public Task Deliver(DeliveryContext<InMemoryTransportMessage> context)
         {
-            if (context.WasAlreadyDelivered(this))
-                return Task.FromResult(false);
-
-            Interlocked.Increment(ref _queueDepth);
-
-            Task.Factory.StartNew(() => DispatchMessage(context.Package), _cancellationToken.Token, TaskCreationOptions.None, _scheduler);
-
-            return Task.FromResult(true);
+            return context.WasAlreadyDelivered(this)
+                ? Task.CompletedTask
+                : context.Message.Delay > TimeSpan.Zero
+                    ? DeliverWithDelay(context)
+                    : _executor.Push(() => DispatchMessage(context), context.CancellationToken);
         }
 
-        async Task DispatchMessage(InMemoryTransportMessage message)
+        public async ValueTask DisposeAsync()
         {
-            var consumer = await _consumer.Task.ConfigureAwait(false);
+            _source.Cancel();
 
-            if (_cancellationToken.IsCancellationRequested)
-                return;
+            await _executor.DisposeAsync().ConfigureAwait(false);
+        }
+
+        Task DeliverWithDelay(DeliveryContext<InMemoryTransportMessage> context)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(context.Message.Delay.Value, _source.Token).ConfigureAwait(false);
+
+                    await _executor.Push(() => DispatchMessage(context), _source.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }, context.CancellationToken);
+
+            return Task.CompletedTask;
+        }
+
+        async Task DispatchMessage(DeliveryContext<InMemoryTransportMessage> context)
+        {
+            await _consumer.Task.OrCanceled(_source.Token).ConfigureAwait(false);
 
             try
             {
-                await consumer.Consume(message, _cancellationToken.Token).ConfigureAwait(false);
+                await _consumers.ForEachAsync(x => x.Consume(context.Message, _source.Token)).ConfigureAwait(false);
             }
+            // ReSharper disable once EmptyGeneralCatchClause
             catch
             {
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _queueDepth);
             }
         }
 
         public override string ToString()
         {
             return $"Queue({_name})";
+        }
+
+
+        class ConsumerHandle :
+            ConnectHandle
+        {
+            readonly ConnectHandle _handle;
+            readonly InMemoryQueue _queue;
+
+            public ConsumerHandle(InMemoryQueue queue, ConnectHandle handle)
+            {
+                _queue = queue;
+                _handle = handle;
+            }
+
+            public void Dispose()
+            {
+                _handle.Dispose();
+            }
+
+            public void Disconnect()
+            {
+                _handle.Disconnect();
+            }
         }
     }
 }

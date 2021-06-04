@@ -16,8 +16,7 @@ namespace MassTransit.Scheduling
             _schedulerEndpoint = schedulerEndpoint;
         }
 
-        protected override async Task ScheduleSend<T>(ScheduleMessage<T> message, IPipe<SendContext<ScheduleMessage<T>>> pipe,
-            CancellationToken cancellationToken)
+        protected override async Task ScheduleSend(ScheduleMessage message, IPipe<SendContext<ScheduleMessage>> pipe, CancellationToken cancellationToken)
         {
             var endpoint = await _schedulerEndpoint().ConfigureAwait(false);
 
@@ -32,7 +31,7 @@ namespace MassTransit.Scheduling
                 {
                     InVar.CorrelationId,
                     InVar.Timestamp,
-                    TokenId = tokenId,
+                    TokenId = tokenId
                 })
                 .ConfigureAwait(false);
         }

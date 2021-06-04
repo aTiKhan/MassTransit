@@ -1,24 +1,12 @@
-﻿// Copyright 2007-2016 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.Serialization
+﻿namespace MassTransit.Serialization
 {
     using System;
     using System.Collections.Generic;
+    using System.Globalization;
     using System.Net.Mime;
     using System.Threading.Tasks;
     using GreenPipes;
     using Newtonsoft.Json;
-    using Newtonsoft.Json.Linq;
 
 
     public class SerializedMessageContextAdapter :
@@ -56,14 +44,23 @@ namespace MassTransit.Serialization
             context.ConversationId = ConvertIdToGuid(_message.ConversationId);
             context.InitiatorId = ConvertIdToGuid(_message.InitiatorId);
 
-            if (!string.IsNullOrEmpty(_message.ExpirationTime))
-                context.TimeToLive = DateTime.UtcNow - DateTime.Parse(_message.ExpirationTime);
+            if (!string.IsNullOrWhiteSpace(_message.ExpirationTime))
+            {
+                if (DateTime.TryParse(_message.ExpirationTime, null, DateTimeStyles.RoundtripKind, out var expirationTime)
+                    || DateTime.TryParse(_message.ExpirationTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out expirationTime))
+                {
+                    var timeToLive = expirationTime - DateTime.UtcNow;
+                    context.TimeToLive = timeToLive > TimeSpan.Zero
+                        ? timeToLive
+                        : TimeSpan.FromSeconds(1);
+                }
+            }
 
             var bodySerializer = new StringMessageSerializer(new ContentType(_message.ContentType), _message.Body);
 
             if (!string.IsNullOrWhiteSpace(_message.PayloadMessageHeadersAsJson))
             {
-                var headers = JObject.Parse(_message.PayloadMessageHeadersAsJson).ToObject<Dictionary<string, object>>();
+                IDictionary<string, object> headers = ToHeaderDictionary(_message.PayloadMessageHeadersAsJson);
 
                 if (string.Compare(_message.ContentType, JsonMessageSerializer.JsonContentType.MediaType, StringComparison.OrdinalIgnoreCase) == 0)
                     bodySerializer.UpdateJsonHeaders(headers);
@@ -80,10 +77,9 @@ namespace MassTransit.Serialization
         static Guid? ConvertIdToGuid(string id)
         {
             if (string.IsNullOrWhiteSpace(id))
-                return default(Guid?);
+                return default;
 
-            Guid messageId;
-            if (Guid.TryParse(id, out messageId))
+            if (Guid.TryParse(id, out var messageId))
                 return messageId;
 
             throw new FormatException("The Id was not a Guid: " + id);
@@ -94,9 +90,14 @@ namespace MassTransit.Serialization
             if (string.IsNullOrEmpty(_message.HeadersAsJson))
                 return;
 
-            var headers = JsonConvert.DeserializeObject<IDictionary<string, object>>(_message.HeadersAsJson);
+            IDictionary<string, object> headers = ToHeaderDictionary(_message.HeadersAsJson);
             foreach (KeyValuePair<string, object> header in headers)
                 context.Headers.Set(header.Key, header.Value);
+        }
+
+        static IDictionary<string, object> ToHeaderDictionary(string json)
+        {
+            return JsonConvert.DeserializeObject<IDictionary<string, object>>(json, JsonMessageSerializer.DeserializerSettings);
         }
 
         static Uri ToUri(string s)
@@ -104,7 +105,14 @@ namespace MassTransit.Serialization
             if (string.IsNullOrEmpty(s))
                 return null;
 
-            return new Uri(s);
+            try
+            {
+                return new Uri(s);
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
         }
     }
 }

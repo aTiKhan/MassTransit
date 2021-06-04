@@ -50,22 +50,21 @@ namespace MassTransit.Serialization.JsonConverters
                     if (elementType.IsAbstract)
                         return false;
 
+                    if (typeInfo.IsFSharpType())
+                        return false;
+
                     return true;
                 }
             }
 
-            if (typeInfo.IsArray)
+            if (typeInfo.IsArray && typeInfo.HasElementType && typeInfo.GetArrayRank() == 1)
             {
                 elementType = typeInfo.GetElementType();
+                if (elementType == typeof(byte))
+                    return false;
 
-                if (typeInfo.HasElementType)
-                {
-                    if (elementType == typeof(byte))
-                        return false;
-
-                    if (elementType.IsAbstract)
-                        return false;
-                }
+                if (elementType.IsAbstract)
+                    return false;
 
                 return objectType.HasInterface<IEnumerable>();
             }
@@ -82,28 +81,33 @@ namespace MassTransit.Serialization.JsonConverters
 
             object IConverter.Deserialize(JsonReader reader, Type objectType, JsonSerializer serializer)
             {
-                var contract = _contract ?? (_contract = ResolveContract(objectType, serializer));
+                var contract = _contract ??= ResolveContract(objectType, serializer);
 
                 if (reader.TokenType == JsonToken.Null)
                     return null;
 
-                ICollection<T> list = contract.DefaultCreator != null
-                    ? contract.DefaultCreator() as ICollection<T>
-                    : new List<T>();
-
+                object result;
                 if (reader.TokenType == JsonToken.StartArray)
-                    serializer.Populate(reader, list);
+                {
+                    result = contract.DefaultCreator != null
+                        ? contract.DefaultCreator()
+                        : new List<T>();
+
+                    serializer.Populate(reader, result);
+                }
                 else
                 {
                     var item = (T)serializer.Deserialize(reader, typeof(T));
-                    list.Add(item);
+                    result = new List<T> {item};
                 }
 
-                if (contract.CreatedType.IsArray)
-                    return list.ToArray();
+                if (contract.CreatedType.IsArray && result is IEnumerable<T> enumerable)
+                    return enumerable.ToArray();
 
-                return list;
+                return result;
             }
+
+            public bool IsSupported => true;
 
             static JsonArrayContract ResolveContract(Type objectType, JsonSerializer serializer)
             {
@@ -113,8 +117,6 @@ namespace MassTransit.Serialization.JsonConverters
 
                 throw new JsonSerializationException("Object is not an array contract");
             }
-
-            public bool IsSupported => true;
         }
     }
 }

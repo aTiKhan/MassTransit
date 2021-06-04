@@ -1,46 +1,39 @@
-// Copyright 2007-2019 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
 namespace MassTransit.Transports
 {
     using System;
     using System.Threading;
     using System.Threading.Tasks;
     using Configuration;
+    using Context;
+    using EndpointConfigurators;
     using GreenPipes;
     using GreenPipes.Agents;
     using Pipeline;
+    using Riders;
     using Topology;
 
 
     public abstract class BaseHost :
-        Supervisor,
-        IBusHostControl
+        IHost
     {
         readonly IHostConfiguration _hostConfiguration;
-        readonly IReceiveEndpointCollection _receiveEndpoints;
         HostHandle _handle;
 
-        protected BaseHost(IHostConfiguration hostConfiguration)
+        protected BaseHost(IHostConfiguration hostConfiguration, IHostTopology hostTopology)
         {
             _hostConfiguration = hostConfiguration;
+            Topology = hostTopology;
 
-            _receiveEndpoints = new ReceiveEndpointCollection();
+            ReceiveEndpoints = new ReceiveEndpointCollection();
+            Riders = new RiderCollection();
         }
 
-        protected IReceiveEndpointCollection ReceiveEndpoints => _receiveEndpoints;
+        protected IReceiveEndpointCollection ReceiveEndpoints { get; }
+        IRiderCollection Riders { get; }
 
-        Uri IHost.Address => _hostConfiguration.HostAddress;
-        IHostTopology IHost.Topology => _hostConfiguration.Topology;
+        public Uri Address => _hostConfiguration.HostAddress;
+
+        public IHostTopology Topology { get; }
 
         public abstract HostReceiveEndpointHandle ConnectReceiveEndpoint(IEndpointDefinition definition, IEndpointNameFormatter endpointNameFormatter,
             Action<IReceiveEndpointConfigurator> configureEndpoint = null);
@@ -49,49 +42,80 @@ namespace MassTransit.Transports
 
         ConnectHandle IConsumeMessageObserverConnector.ConnectConsumeMessageObserver<T>(IConsumeMessageObserver<T> observer)
         {
-            return _receiveEndpoints.ConnectConsumeMessageObserver(observer);
+            return ReceiveEndpoints.ConnectConsumeMessageObserver(observer);
         }
 
         ConnectHandle IConsumeObserverConnector.ConnectConsumeObserver(IConsumeObserver observer)
         {
-            return _receiveEndpoints.ConnectConsumeObserver(observer);
+            return _hostConfiguration.ConnectConsumeObserver(observer);
         }
 
         ConnectHandle IReceiveObserverConnector.ConnectReceiveObserver(IReceiveObserver observer)
         {
-            return _receiveEndpoints.ConnectReceiveObserver(observer);
+            return _hostConfiguration.ConnectReceiveObserver(observer);
         }
 
         ConnectHandle IReceiveEndpointObserverConnector.ConnectReceiveEndpointObserver(IReceiveEndpointObserver observer)
         {
-            return _receiveEndpoints.ConnectReceiveEndpointObserver(observer);
+            return ReceiveEndpoints.ConnectReceiveEndpointObserver(observer);
+        }
+
+        public ConnectHandle ConnectEndpointConfigurationObserver(IEndpointConfigurationObserver observer)
+        {
+            return _hostConfiguration.ConnectEndpointConfigurationObserver(observer);
         }
 
         ConnectHandle IPublishObserverConnector.ConnectPublishObserver(IPublishObserver observer)
         {
-            return _receiveEndpoints.ConnectPublishObserver(observer);
+            return _hostConfiguration.ConnectPublishObserver(observer);
         }
 
         ConnectHandle ISendObserverConnector.ConnectSendObserver(ISendObserver observer)
         {
-            return _receiveEndpoints.ConnectSendObserver(observer);
+            return _hostConfiguration.ConnectSendObserver(observer);
         }
 
-        public virtual Task<HostHandle> Start(CancellationToken cancellationToken)
+        public HostHandle Start(CancellationToken cancellationToken)
         {
             if (_handle != null)
-                throw new MassTransitException($"The host was already started: {_hostConfiguration.HostAddress}");
+            {
+                LogContext.Warning?.Log("Start called, but the host was already started: {Address} ({Reason})", _hostConfiguration.HostAddress,
+                    "Already Started");
 
-            HostReceiveEndpointHandle[] handles = _receiveEndpoints.StartEndpoints(cancellationToken);
+                return _handle;
+            }
 
-            _handle = new StartHostHandle(this, handles, GetAgentHandles());
+            LogContext.SetCurrentIfNull(_hostConfiguration.LogContext);
 
-            return Task.FromResult(_handle);
+            LogContext.Debug?.Log("Starting bus: {HostAddress}", _hostConfiguration.HostAddress);
+
+            HostReceiveEndpointHandle[] handles = ReceiveEndpoints.StartEndpoints(cancellationToken);
+
+            HostRiderHandle[] riders = Riders.StartRiders(cancellationToken);
+
+            _handle = new StartHostHandle(this, handles, riders);
+
+            return _handle;
         }
 
-        void IBusHostControl.AddReceiveEndpoint(string endpointName, IReceiveEndpointControl receiveEndpoint)
+        public void AddReceiveEndpoint(string endpointName, ReceiveEndpoint receiveEndpoint)
         {
-            _receiveEndpoints.Add(endpointName, receiveEndpoint);
+            ReceiveEndpoints.Add(endpointName, receiveEndpoint);
+        }
+
+        public IRider GetRider(string name)
+        {
+            return Riders.Get(name);
+        }
+
+        public void AddRider(string name, IRiderControl riderControl)
+        {
+            Riders.Add(name, riderControl);
+        }
+
+        public HealthResult CheckHealth(BusState busState, string healthMessage)
+        {
+            return ReceiveEndpoints.CheckHealth(busState, healthMessage);
         }
 
         void IProbeSite.Probe(ProbeContext context)
@@ -100,24 +124,23 @@ namespace MassTransit.Transports
 
             Probe(scope);
 
-            _receiveEndpoints.Probe(scope);
+            ReceiveEndpoints.Probe(scope);
         }
 
-        async Task IAgent.Stop(StopContext context)
+        public async Task Stop(CancellationToken cancellationToken)
         {
-            await _receiveEndpoints.Stop(context).ConfigureAwait(false);
+            LogContext.Current = _hostConfiguration.LogContext;
 
-            await base.Stop(context).ConfigureAwait(false);
-        }
+            LogContext.Debug?.Log("Stopping bus: {HostAddress}", Address);
 
-        protected override async Task StopSupervisor(StopSupervisorContext context)
-        {
-            await base.StopSupervisor(context).ConfigureAwait(false);
+            await Riders.Stop(cancellationToken).ConfigureAwait(false);
+
+            await ReceiveEndpoints.Stop(cancellationToken).ConfigureAwait(false);
 
             foreach (var agent in GetAgentHandles())
-            {
-                await agent.Stop(context).ConfigureAwait(false);
-            }
+                await agent.Stop("Bus stopped", cancellationToken).ConfigureAwait(false);
+
+            _handle = null;
         }
 
         protected abstract void Probe(ProbeContext context);

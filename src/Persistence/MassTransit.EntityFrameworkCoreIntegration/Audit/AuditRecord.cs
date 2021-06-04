@@ -1,24 +1,8 @@
-﻿// Copyright 2007-2017 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.EntityFrameworkCoreIntegration.Audit
+﻿namespace MassTransit.EntityFrameworkCoreIntegration.Audit
 {
     using System;
     using System.Collections.Generic;
-    using System.ComponentModel.DataAnnotations.Schema;
-
     using MassTransit.Audit;
-
-    using Newtonsoft.Json;
 
 
     public class AuditRecord
@@ -29,6 +13,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Audit
         public Guid? CorrelationId { get; set; }
         public Guid? InitiatorId { get; set; }
         public Guid? RequestId { get; set; }
+        public DateTime? SentTime { get; set; }
         public string SourceAddress { get; set; }
         public string DestinationAddress { get; set; }
         public string ResponseAddress { get; set; }
@@ -36,39 +21,9 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Audit
         public string InputAddress { get; set; }
         public string ContextType { get; set; }
         public string MessageType { get; set; }
-
-        internal string _custom { get; set; }
-
-        [NotMapped]
-        public Dictionary<string, string> Custom
-        {
-            get => string.IsNullOrEmpty(this._custom)
-                       ? new Dictionary<string, string>()
-                       : JsonConvert.DeserializeObject<Dictionary<string, string>>(this._custom);
-            set => this._custom = JsonConvert.SerializeObject(value);
-        }
-
-        internal string _headers { get; set; }
-
-        [NotMapped]
-        public Dictionary<string, string> Headers
-        {
-            get => string.IsNullOrEmpty(this._headers)
-                       ? new Dictionary<string, string>()
-                       : JsonConvert.DeserializeObject<Dictionary<string, string>>(this._headers);
-            set => this._headers = JsonConvert.SerializeObject(value);
-        }
-
-        internal string _message { get; set; }
-
-        [NotMapped]
-        public object Message
-        {
-            get => string.IsNullOrEmpty(this._message)
-                       ? null
-                       : JsonConvert.DeserializeObject(this._message);
-            set => this._message = JsonConvert.SerializeObject(value);
-        }
+        public Dictionary<string, string> Custom { get; set; }
+        public Dictionary<string, string> Headers { get; set; }
+        public object Message { get; set; }
 
         internal static AuditRecord Create<T>(T message, string messageType, MessageAuditMetadata metadata)
             where T : class
@@ -81,9 +36,11 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Audit
                 CorrelationId = metadata.CorrelationId,
                 InitiatorId = metadata.InitiatorId,
                 RequestId = metadata.RequestId,
+                SentTime = metadata.SentTime,
                 SourceAddress = metadata.SourceAddress,
                 DestinationAddress = metadata.DestinationAddress,
                 ResponseAddress = metadata.ResponseAddress,
+                InputAddress = metadata.InputAddress,
                 FaultAddress = metadata.FaultAddress,
                 Headers = metadata.Headers,
                 Custom = metadata.Custom,

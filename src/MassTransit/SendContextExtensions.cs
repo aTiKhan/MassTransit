@@ -1,51 +1,16 @@
-﻿// Copyright 2007-2015 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the
-// License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-namespace MassTransit
+﻿namespace MassTransit
 {
     using System;
     using System.Collections.Generic;
     using Context;
+    using GreenPipes;
+    using Metadata;
+    using Transports;
     using Util;
 
 
     public static class SendContextExtensions
     {
-        public static void SetTextHeaders<T>(this IDictionary<string, T> dictionary, SendHeaders headers, Func<string, string, T> converter)
-        {
-            foreach (var header in headers.GetAll())
-            {
-                if (header.Value == null)
-                {
-                    if (dictionary.ContainsKey(header.Key))
-                        dictionary.Remove(header.Key);
-
-                    continue;
-                }
-
-                if (dictionary.ContainsKey(header.Key))
-                    continue;
-
-                if (header.Value is string stringValue)
-                {
-                    dictionary[header.Key] = converter(header.Key, stringValue);
-                }
-                else if (header.Value is IFormattable formatValue && formatValue.GetType().IsValueType)
-                {
-                    dictionary.Add(header.Key, converter(header.Key, formatValue.ToString()));
-                }
-            }
-        }
-
         /// <summary>
         /// Set the host headers on the SendContext (for error, dead-letter, etc.)
         /// </summary>
@@ -60,6 +25,23 @@ namespace MassTransit
             headers.Set(MessageHeaders.Host.MassTransitVersion, HostMetadataCache.Host.MassTransitVersion);
             headers.Set(MessageHeaders.Host.FrameworkVersion, HostMetadataCache.Host.FrameworkVersion);
             headers.Set(MessageHeaders.Host.OperatingSystemVersion, HostMetadataCache.Host.OperatingSystemVersion);
+        }
+
+        /// <summary>
+        /// Set the host headers on the SendContext (for error, dead-letter, etc.)
+        /// </summary>
+        /// <param name="adapter"></param>
+        /// <param name="dictionary"></param>
+        public static void SetHostHeaders<T>(this ITransportSetHeaderAdapter<T> adapter, IDictionary<string, T> dictionary)
+        {
+            adapter.Set(dictionary, MessageHeaders.Host.MachineName, HostMetadataCache.Host.MachineName);
+            adapter.Set(dictionary, MessageHeaders.Host.ProcessName, HostMetadataCache.Host.ProcessName);
+            adapter.Set(dictionary, MessageHeaders.Host.ProcessId, HostMetadataCache.Host.ProcessId);
+            adapter.Set(dictionary, MessageHeaders.Host.Assembly, HostMetadataCache.Host.Assembly);
+            adapter.Set(dictionary, MessageHeaders.Host.AssemblyVersion, HostMetadataCache.Host.AssemblyVersion);
+            adapter.Set(dictionary, MessageHeaders.Host.MassTransitVersion, HostMetadataCache.Host.MassTransitVersion);
+            adapter.Set(dictionary, MessageHeaders.Host.FrameworkVersion, HostMetadataCache.Host.FrameworkVersion);
+            adapter.Set(dictionary, MessageHeaders.Host.OperatingSystemVersion, HostMetadataCache.Host.OperatingSystemVersion);
         }
 
         /// <summary>
@@ -85,6 +67,39 @@ namespace MassTransit
                 headers.Set(MessageHeaders.FaultConsumerType, info.ConsumerType);
                 headers.Set(MessageHeaders.FaultMessageType, info.MessageType);
             }
+
+            if (exceptionContext.TryGetPayload(out RetryContext retryContext) && retryContext.RetryCount > 0)
+                headers.Set(MessageHeaders.FaultRetryCount, retryContext.RetryCount);
+        }
+
+        /// <summary>
+        /// Set the host headers on the SendContext (for error, dead-letter, etc.)
+        /// </summary>
+        /// <param name="adapter"></param>
+        /// <param name="headers"></param>
+        /// <param name="exceptionContext"></param>
+        public static void SetExceptionHeaders<T>(this ITransportSetHeaderAdapter<T> adapter, IDictionary<string, T> headers, ExceptionReceiveContext
+            exceptionContext)
+        {
+            var exception = exceptionContext.Exception.GetBaseException() ?? exceptionContext.Exception;
+
+            var exceptionMessage = ExceptionUtil.GetMessage(exception);
+
+            adapter.Set(headers, MessageHeaders.Reason, "fault");
+
+            adapter.Set(headers, MessageHeaders.FaultExceptionType, TypeMetadataCache.GetShortName(exception.GetType()));
+            adapter.Set(headers, MessageHeaders.FaultMessage, exceptionMessage);
+            adapter.Set(headers, MessageHeaders.FaultTimestamp, exceptionContext.ExceptionTimestamp);
+            adapter.Set(headers, MessageHeaders.FaultStackTrace, ExceptionUtil.GetStackTrace(exception));
+
+            if (exceptionContext.TryGetPayload(out ConsumerFaultInfo info))
+            {
+                adapter.Set(headers, MessageHeaders.FaultConsumerType, info.ConsumerType);
+                adapter.Set(headers, MessageHeaders.FaultMessageType, info.MessageType);
+            }
+
+            if (exceptionContext.TryGetPayload(out RetryContext retryContext) && retryContext.RetryCount > 0)
+                adapter.Set(headers, MessageHeaders.FaultRetryCount, retryContext.RetryCount);
         }
 
         /// <summary>
@@ -94,7 +109,7 @@ namespace MassTransit
         /// <param name="consumeContext"></param>
         public static void TransferConsumeContextHeaders(this SendContext sendContext, ConsumeContext consumeContext)
         {
-            sendContext.AddOrUpdatePayload(() => consumeContext, _ => consumeContext);
+            sendContext.GetOrAddPayload(() => consumeContext);
 
             sendContext.SourceAddress = consumeContext.ReceiveContext.InputAddress;
 
@@ -106,17 +121,45 @@ namespace MassTransit
             else if (consumeContext.RequestId.HasValue)
                 sendContext.InitiatorId = consumeContext.RequestId;
 
+            var headers = sendContext.Headers;
+
             foreach (KeyValuePair<string, object> header in consumeContext.Headers.GetAll())
             {
                 if (header.Key.StartsWith("MT-"))
                     continue;
 
-                // do not overwrite headers which have already been set
-                if (sendContext.Headers.TryGetHeader(header.Key, out _))
-                    continue;
-
-                sendContext.Headers.Set(header.Key, header.Value);
+                headers.Set(header.Key, header.Value, false);
             }
+        }
+
+        /// <summary>
+        /// Sets the ConversationId to a new value, starting a new conversation. If a message was being consumed, and the
+        /// ConversationId was present, that value is stored in an MT-InitiatingConversationId header.
+        /// </summary>
+        /// <param name="context">The send context</param>
+        /// <returns></returns>
+        public static SendContext StartNewConversation(this SendContext context)
+        {
+            return StartNewConversation(context, NewId.NextGuid());
+        }
+
+        /// <summary>
+        /// Sets the ConversationId to a new value, starting a new conversation. If a message was being consumed, and the
+        /// ConversationId was present, that value is stored in an MT-InitiatingConversationId header.
+        /// </summary>
+        /// <param name="context">The send context</param>
+        /// <param name="conversationId">The new ConversationId</param>
+        /// <returns></returns>
+        public static SendContext StartNewConversation(this SendContext context, Guid conversationId)
+        {
+            if (context.ConversationId.HasValue)
+            {
+                context.Headers.Set(MessageHeaders.InitiatingConversationId, context.ConversationId.Value.ToString());
+            }
+
+            context.ConversationId = conversationId;
+
+            return context;
         }
     }
 }

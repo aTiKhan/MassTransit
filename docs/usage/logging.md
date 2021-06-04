@@ -1,96 +1,46 @@
 # Logging
 
-Logging in MassTransit is now done using an internal abstraction allowing you
-to choose your preferred logging solution. MassTransit has a log named
-`MassTransit.Messages` where all of the message traffic is logged.
-This logging looks like:
+The MassTransit framework has fully adopted the [`Microsoft.Extensions.Logging`](https://docs.microsoft.com/en-us/aspnet/core/fundamentals/logging/?view=aspnetcore-5.0) framework.
+So, it will use whatever logging configuration is already in your container.
 
-```
-RECV:{Address}:{Message Id}:{Message Type Name}
-SEND:{Address}:{Message Name}
-```
 
-## Log4Net
+# Examples
 
-To use log4net for MassTransit logging, you need to install the
-`MassTransit.Log4Net` NuGet package.
+## Basic Configuration
 
-Then add logging to your service bus initialization;
-
-```csharp
-using MassTransit.Log4NetIntegration;
-
-XmlConfigurator.Configure();
-
-var busControl = Bus.Factory.CreateUsingRabbitMq(cfg =>
-{
-    cfg.UseLog4Net();
-});
-```
-
-## NLog
-
-To use NLog for MassTransit logging, you need to install the
-`MassTransit.NLog` NuGet package.
-
-Then add logging to your service bus initialization:
-
-```csharp
-using MassTransit.NLogIntegration;
-
-//configure NLog
-
-var busControl = Bus.Factory.CreateUsingRabbitMq(cfg =>
-{
-    /* usual stuff */
-    cfg.UseNLog();
-});
-```
+By integrating with `Microsoft.Extensions.Logging` the basic configuration is no configuration. :tada:
+When you run a project using the HostBuilder features of .Net you will get a basic logging experience right
+out of the box.
 
 ## Serilog
 
-To use Serilog for MassTransit logging, install the `MassTransit.SerilogIntegration`
-package.
+At MassTransit, we are big fans of [Serilog](https://serilog.net/) and use this default configuration as a starting point in
+most projects.
 
-Then add logging to your service bus initialization:
-
-```csharp
-using MassTransit.SerilogIntegration;
-
-
-//configure Serilog
-
-var busControl = Bus.Factory.CreateUsingRabbitMq(cfg =>
-{
-    /* usual stuff */
-
-    // to use the global Log.Logger, use this:
-    cfg.UseSerilog();
-
-    // To use custom logger, use this:
-    cfg.UseSerilog(logger);
-});
+```sh
+dotnet add package Serilog.Extensions.Hosting
+dotnet add package Serilog
+dotnet add package Serilog.Sinks.Console
 ```
 
-## Microsoft Extensions Logger
-
-To use Microsoft Extensions Logger for MassTransit logging, install the `MassTransit.Extensions.Logging`
-package.
-
-Then add logging to your service bus initialization:
-
 ```csharp
-
-//configure ILoggerFactory
-
-services.AddSingleton(sp => Bus.Factory.CreateUsingRabbitMq(cfg =>
+public static IHostBuilder CreateHostBuilder(string[] args)
 {
-    /* usual stuff */
+    return Host.CreateDefaultBuilder(args)
+        .UseSerilog((host, log) =>
+        {
+            if (host.HostingEnvironment.IsProduction())
+                log.MinimumLevel.Information();
+            else
+                log.MinimumLevel.Debug();
 
-    // to use custom logger, use this:
-    cfg.UseExtensionsLogging(new LoggerFactory());
-
-    // To use configured logger, use this:
-    cfg.UseExtensionsLogging(sp.GetRequiredService<ILoggerFactory>());
-}));
+            log.MinimumLevel.Override("Microsoft", LogEventLevel.Warning);
+            log.MinimumLevel.Override("Quartz", LogEventLevel.Information);
+            log.WriteTo.Console();
+        })
+        .ConfigureWebHostDefaults(webBuilder =>
+        {
+            webBuilder.UseStartup<Startup>();
+        });
+}
 ```

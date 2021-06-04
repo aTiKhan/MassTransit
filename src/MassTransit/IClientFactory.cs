@@ -1,29 +1,18 @@
-﻿// Copyright 2007-2018 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the
-// License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-namespace MassTransit
+﻿namespace MassTransit
 {
     using System;
     using System.Threading;
-    using GreenPipes;
+    using Clients;
 
 
     /// <summary>
-    /// A client factory supports the creation of smart clients that use the
-    /// smart endpoint aspects of Conductor to intelligently route messages.
+    /// The client factory is used to create request clients
     /// </summary>
     public interface IClientFactory :
         IAsyncDisposable
     {
+        ClientFactoryContext Context { get; }
+
         /// <summary>
         /// Create a request, using the message specified. If a destinationAddress for the message cannot be found, the message will be published.
         /// </summary>
@@ -71,6 +60,57 @@ namespace MassTransit
         /// <typeparam name="T">The message type</typeparam>
         /// <returns></returns>
         RequestHandle<T> CreateRequest<T>(ConsumeContext consumeContext, Uri destinationAddress, T message, CancellationToken cancellationToken = default,
+            RequestTimeout timeout = default)
+            where T : class;
+
+        /// <summary>
+        /// Create a request, using the message specified. If a destinationAddress for the message cannot be found, the message will be published.
+        /// </summary>
+        /// <param name="values">The values to initialize the message</param>
+        /// <param name="cancellationToken"></param>
+        /// <param name="timeout"></param>
+        /// <typeparam name="T">The message type</typeparam>
+        /// <returns></returns>
+        RequestHandle<T> CreateRequest<T>(object values, CancellationToken cancellationToken = default, RequestTimeout timeout = default)
+            where T : class;
+
+        /// <summary>
+        /// Create a request, using the message specified. If a destinationAddress for the message cannot be found, the message will be published.
+        /// </summary>
+        /// <param name="destinationAddress">The destination service address</param>
+        /// <param name="values">The values to initialize the message</param>
+        /// <param name="cancellationToken"></param>
+        /// <param name="timeout"></param>
+        /// <typeparam name="T">The message type</typeparam>
+        /// <returns></returns>
+        RequestHandle<T> CreateRequest<T>(Uri destinationAddress, object values, CancellationToken cancellationToken = default,
+            RequestTimeout timeout = default)
+            where T : class;
+
+        /// <summary>
+        /// Create a request, using the message specified. If a destinationAddress for the message cannot be found, the message will be published.
+        /// </summary>
+        /// <param name="consumeContext">The consumeContext currently being processed</param>
+        /// <param name="values">The values to initialize the message</param>
+        /// <param name="cancellationToken"></param>
+        /// <param name="timeout"></param>
+        /// <typeparam name="T">The message type</typeparam>
+        /// <returns></returns>
+        RequestHandle<T> CreateRequest<T>(ConsumeContext consumeContext, object values, CancellationToken cancellationToken = default,
+            RequestTimeout timeout = default)
+            where T : class;
+
+        /// <summary>
+        /// Create a request, using the message specified. If a destinationAddress for the message cannot be found, the message will be published.
+        /// </summary>
+        /// <param name="consumeContext">The consumeContext currently being processed</param>
+        /// <param name="destinationAddress">The destination service address</param>
+        /// <param name="values">The values to initialize the message</param>
+        /// <param name="cancellationToken"></param>
+        /// <param name="timeout"></param>
+        /// <typeparam name="T">The message type</typeparam>
+        /// <returns></returns>
+        RequestHandle<T> CreateRequest<T>(ConsumeContext consumeContext, Uri destinationAddress, object values, CancellationToken cancellationToken = default,
             RequestTimeout timeout = default)
             where T : class;
 

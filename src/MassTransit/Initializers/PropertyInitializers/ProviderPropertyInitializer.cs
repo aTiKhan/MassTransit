@@ -18,8 +18,8 @@ namespace MassTransit.Initializers.PropertyInitializers
         where TMessage : class
         where TInput : class
     {
-        readonly IPropertyProvider<TInput, TProperty> _propertyProvider;
         readonly IWriteProperty<TMessage, TProperty> _messageProperty;
+        readonly IPropertyProvider<TInput, TProperty> _propertyProvider;
 
         public ProviderPropertyInitializer(IPropertyProvider<TInput, TProperty> propertyProvider, PropertyInfo propertyInfo)
         {
@@ -36,21 +36,23 @@ namespace MassTransit.Initializers.PropertyInitializers
 
         public Task Apply(InitializeContext<TMessage, TInput> context)
         {
-            var propertyTask = _propertyProvider.GetProperty(context);
+            Task<TProperty> propertyTask = _propertyProvider.GetProperty(context);
             if (propertyTask.IsCompleted)
             {
-                _messageProperty.Set(context.Message, propertyTask.Result);
+                if (_messageProperty.TargetType == context.MessageType)
+                    _messageProperty.Set(context.Message, propertyTask.Result);
                 return TaskUtil.Completed;
             }
 
-            return ApplyAsync(context, propertyTask);
-        }
+            async Task ApplyAsync()
+            {
+                var propertyValue = await propertyTask.ConfigureAwait(false);
 
-        async Task ApplyAsync(InitializeContext<TMessage, TInput> context, Task<TProperty> propertyTask)
-        {
-            var propertyValue = await propertyTask.ConfigureAwait(false);
+                if (_messageProperty.TargetType == context.MessageType)
+                    _messageProperty.Set(context.Message, propertyValue);
+            }
 
-            _messageProperty.Set(context.Message, propertyValue);
+            return ApplyAsync();
         }
     }
 }

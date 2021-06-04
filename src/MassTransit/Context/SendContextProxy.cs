@@ -7,7 +7,7 @@ namespace MassTransit.Context
 
     public class SendContextProxy<TMessage> :
         SendContextProxy,
-        PublishContext<TMessage>
+        SendContext<TMessage>
         where TMessage : class
     {
         public SendContextProxy(SendContext context, TMessage message)
@@ -21,8 +21,7 @@ namespace MassTransit.Context
 
 
     public class SendContextProxy :
-        BasePipeContext,
-        PublishContext
+        ProxyPipeContext
     {
         readonly SendContext _context;
 
@@ -30,53 +29,6 @@ namespace MassTransit.Context
             : base(context)
         {
             _context = context;
-        }
-
-        public override bool HasPayloadType(Type payloadType)
-        {
-            if (base.HasPayloadType(payloadType))
-                return true;
-
-            return _context.HasPayloadType(payloadType);
-        }
-
-        public override bool TryGetPayload<T>(out T payload)
-        {
-            if (base.TryGetPayload(out payload))
-                return true;
-
-            return _context.TryGetPayload(out payload);
-        }
-
-        public override T GetOrAddPayload<T>(PayloadFactory<T> payloadFactory)
-        {
-            if (base.TryGetPayload<T>(out var existing))
-                return existing;
-
-            if (_context.TryGetPayload(out existing))
-                return existing;
-
-            return base.GetOrAddPayload(payloadFactory);
-        }
-
-        public override T AddOrUpdatePayload<T>(PayloadFactory<T> addFactory, UpdatePayloadFactory<T> updateFactory)
-        {
-            if (base.TryGetPayload<T>(out var existing) || _context.TryGetPayload(out existing))
-            {
-                T Update(T _)
-                {
-                    return updateFactory(existing);
-                }
-
-                T Add()
-                {
-                    return updateFactory(existing);
-                }
-
-                return base.AddOrUpdatePayload(Add, Update);
-            }
-
-            return base.AddOrUpdatePayload(addFactory, updateFactory);
         }
 
         public Uri SourceAddress
@@ -147,6 +99,8 @@ namespace MassTransit.Context
             set => _context.TimeToLive = value;
         }
 
+        public DateTime? SentTime => _context.SentTime;
+
         public ContentType ContentType
         {
             get => _context.ContentType;
@@ -165,16 +119,16 @@ namespace MassTransit.Context
             set => _context.Serializer = value;
         }
 
-        public SendContext<T> CreateProxy<T>(T message)
-            where T : class
-        {
-            return _context.CreateProxy(message);
-        }
-
         public bool Mandatory
         {
             get => _context.GetPayload<PublishContext>().Mandatory;
             set => _context.GetPayload<PublishContext>().Mandatory = value;
+        }
+
+        public SendContext<T> CreateProxy<T>(T message)
+            where T : class
+        {
+            return _context.CreateProxy(message);
         }
     }
 }

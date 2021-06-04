@@ -6,7 +6,7 @@
     using System.Reflection;
     using System.Text;
     using HeaderInitializers;
-    using Internals.Extensions;
+    using Metadata;
     using PropertyInitializers;
     using PropertyProviders;
 
@@ -21,7 +21,7 @@
 
         public DefaultInitializerConvention()
         {
-            _inputProperties = typeof(TInput).GetAllProperties().GroupBy(x => x.Name).ToDictionary(x => x.Key, x => x.Last(), StringComparer.OrdinalIgnoreCase);
+            _inputProperties = TypeMetadataCache<TInput>.Properties.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
             _providerFactory = new PropertyProviderFactory<TInput>();
         }
 
@@ -65,7 +65,7 @@
             var propertyName = propertyInfo?.Name ?? throw new ArgumentNullException(nameof(propertyInfo));
 
             // headers use a double underscore prefix
-            string inputPropertyName = new StringBuilder(propertyName.Length + 2).Append("__").Append(propertyName).ToString();
+            var inputPropertyName = new StringBuilder(propertyName.Length + 2).Append("__").Append(propertyName).ToString();
 
             if (_inputProperties.TryGetValue(inputPropertyName, out var inputPropertyInfo))
             {
@@ -94,7 +94,7 @@
         {
             if (propertyInfo.Name.StartsWith("__Header_") && propertyInfo.Name.Length > 9)
             {
-                string headerName = propertyInfo.Name.Substring(9).Replace("__", " ").Replace("_", "-").Replace(" ", "_");
+                var headerName = propertyInfo.Name.Substring(9).Replace("__", " ").Replace("_", "-").Replace(" ", "_");
 
                 var inputPropertyType = propertyInfo.PropertyType;
 

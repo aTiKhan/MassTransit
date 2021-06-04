@@ -1,37 +1,47 @@
-﻿// Copyright 2007-2017 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit.Testing
+﻿namespace MassTransit.Testing
 {
+    using System;
+    using ConsumeConfigurators;
     using Decorators;
     using MessageObservers;
 
 
-    public class ConsumerTestHarness<TConsumer>
+    public class ConsumerTestHarness<TConsumer> :
+        IConsumerTestHarness<TConsumer>
         where TConsumer : class, IConsumer
     {
+        readonly Action<IConsumerConfigurator<TConsumer>> _configure;
         readonly ReceivedMessageList _consumed;
         readonly IConsumerFactory<TConsumer> _consumerFactory;
 
-        public ConsumerTestHarness(BusTestHarness testHarness, IConsumerFactory<TConsumer> consumerFactory, string queueName)
+        public ConsumerTestHarness(BusTestHarness testHarness, IConsumerFactory<TConsumer> consumerFactory,
+            Action<IConsumerConfigurator<TConsumer>> configure, string queueName)
+            : this(testHarness, consumerFactory, queueName)
         {
-            _consumerFactory = consumerFactory;
+            _configure = configure;
+        }
 
-            _consumed = new ReceivedMessageList(testHarness.TestTimeout);
-
+        public ConsumerTestHarness(BusTestHarness testHarness, IConsumerFactory<TConsumer> consumerFactory, string queueName)
+            : this(testHarness, consumerFactory)
+        {
             if (string.IsNullOrWhiteSpace(queueName))
                 testHarness.OnConfigureReceiveEndpoint += ConfigureReceiveEndpoint;
             else
                 testHarness.OnConfigureBus += configurator => ConfigureNamedReceiveEndpoint(configurator, queueName);
+        }
+
+        public ConsumerTestHarness(BusTestHarness testHarness, IConsumerFactory<TConsumer> consumerFactory,
+            Action<IConsumerConfigurator<TConsumer>> configure)
+            : this(testHarness, consumerFactory)
+        {
+            _configure = configure;
+        }
+
+        public ConsumerTestHarness(BusTestHarness testHarness, IConsumerFactory<TConsumer> consumerFactory)
+        {
+            _consumerFactory = consumerFactory;
+
+            _consumed = new ReceivedMessageList(testHarness.TestTimeout, testHarness.InactivityToken);
         }
 
         public IReceivedMessageList Consumed => _consumed;
@@ -40,7 +50,7 @@ namespace MassTransit.Testing
         {
             var decorator = new TestConsumerFactoryDecorator<TConsumer>(_consumerFactory, _consumed);
 
-            configurator.Consumer(decorator);
+            configurator.Consumer(decorator, c => _configure?.Invoke(c));
         }
 
         protected virtual void ConfigureNamedReceiveEndpoint(IBusFactoryConfigurator configurator, string queueName)
@@ -49,7 +59,7 @@ namespace MassTransit.Testing
             {
                 var decorator = new TestConsumerFactoryDecorator<TConsumer>(_consumerFactory, _consumed);
 
-                x.Consumer(decorator);
+                x.Consumer(decorator, c => _configure?.Invoke(c));
             });
         }
     }

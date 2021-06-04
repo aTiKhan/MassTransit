@@ -1,33 +1,53 @@
-﻿// Copyright 2007-2016 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-namespace MassTransit
+﻿namespace MassTransit
 {
     using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using Configuration;
     using Configurators;
+    using Context;
+    using GreenPipes;
+    using Util;
 
 
     public static class BusFactoryExtensions
     {
-        public static IBusControl Build(this IBusFactory factory)
+        public static IBusControl Build(this IBusFactory factory, IBusConfiguration busConfiguration, IEnumerable<ISpecification> dependencies)
         {
-            var result = BusConfigurationResult.CompileResults(factory.Validate());
+            return Build(factory, busConfiguration, factory.Validate()
+                .Concat(dependencies.SelectMany(x => x.Validate())));
+        }
+
+        public static IBusControl Build(this IBusFactory factory, IBusConfiguration busConfiguration)
+        {
+            return Build(factory, busConfiguration, factory.Validate());
+        }
+
+        static IBusControl Build(IBusFactory factory, IBusConfiguration busConfiguration, IEnumerable<ValidationResult> validationResult)
+        {
+            if (LogContext.Current == null)
+                LogContext.ConfigureCurrentLogContext();
+
+            busConfiguration.HostConfiguration.LogContext = LogContext.Current;
+
+            var result = BusConfigurationResult.CompileResults(validationResult);
 
             try
             {
-                return factory.CreateBus();
+                var busReceiveEndpointConfiguration = factory.CreateBusEndpointConfiguration(x => x.ConfigureConsumeTopology = false);
+
+                var host = busConfiguration.HostConfiguration.Build();
+
+                var bus = new MassTransitBus(host, busConfiguration.BusObservers, busReceiveEndpointConfiguration);
+
+                TaskUtil.Await(() => busConfiguration.BusObservers.PostCreate(bus));
+
+                return bus;
             }
             catch (Exception ex)
             {
+                TaskUtil.Await(() => busConfiguration.BusObservers.CreateFaulted(ex));
+
                 throw new ConfigurationException(result, "An exception occurred during bus creation", ex);
             }
         }

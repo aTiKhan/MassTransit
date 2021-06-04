@@ -1,7 +1,7 @@
 ﻿namespace MassTransit.SimpleInjectorIntegration.ScopeProviders
 {
     using Courier;
-    using Courier.Hosts;
+    using Courier.Contexts;
     using GreenPipes;
     using Scoping;
     using Scoping.CourierContexts;
@@ -11,7 +11,7 @@
 
     public class SimpleInjectorCompensateActivityScopeProvider<TActivity, TLog> :
         ICompensateActivityScopeProvider<TActivity, TLog>
-        where TActivity : class, CompensateActivity<TLog>
+        where TActivity : class, ICompensateActivity<TLog>
         where TLog : class
     {
         readonly Container _container;
@@ -25,13 +25,13 @@
         {
             if (context.TryGetPayload<Scope>(out var existingScope))
             {
-                existingScope.UpdateScope(context.ConsumeContext);
+                existingScope.UpdateScope(context);
 
                 var activity = existingScope
                     .Container
                     .GetInstance<TActivity>();
 
-                CompensateActivityContext<TActivity, TLog> activityContext = new HostCompensateActivityContext<TActivity, TLog>(activity, context);
+                CompensateActivityContext<TActivity, TLog> activityContext = context.CreateActivityContext(activity);
 
                 return new ExistingCompensateActivityScopeContext<TActivity, TLog>(activityContext);
             }
@@ -39,19 +39,15 @@
             var scope = AsyncScopedLifestyle.BeginScope(_container);
             try
             {
-                scope.UpdateScope(context.ConsumeContext);
+                CompensateContext<TLog> scopeContext = new CompensateContextScope<TLog>(context, scope);
 
-                var activity = scope
-                    .Container
-                    .GetInstance<TActivity>();
+                scope.UpdateScope(scopeContext);
 
-                CompensateActivityContext<TActivity, TLog> activityContext = new HostCompensateActivityContext<TActivity, TLog>(activity, context);
+                var activity = scope.Container.GetInstance<TActivity>();
 
-                var contextScope = scope;
+                CompensateActivityContext<TActivity, TLog> activityContext = scopeContext.CreateActivityContext(activity);
 
-                activityContext.UpdatePayload(scope);
-
-                return new CreatedCompensateActivityScopeContext<Scope, TActivity, TLog>(contextScope, activityContext);
+                return new CreatedCompensateActivityScopeContext<Scope, TActivity, TLog>(scope, activityContext);
             }
             catch
             {

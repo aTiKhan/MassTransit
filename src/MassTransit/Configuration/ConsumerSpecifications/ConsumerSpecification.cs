@@ -1,26 +1,16 @@
-// Copyright 2007-2017 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
 namespace MassTransit.ConsumerSpecifications
 {
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using Configuration;
     using ConsumeConfigurators;
     using GreenPipes;
-    using Util;
+    using Metadata;
 
 
     public class ConsumerSpecification<TConsumer> :
+        OptionsSet,
         IConsumerSpecification<TConsumer>
         where TConsumer : class
     {
@@ -39,33 +29,29 @@ namespace MassTransit.ConsumerSpecifications
         public void Message<T>(Action<IConsumerMessageConfigurator<T>> configure)
             where T : class
         {
-            if (configure == null)
-                throw new ArgumentNullException(nameof(configure));
-
             IConsumerMessageSpecification<TConsumer, T> specification = GetMessageSpecification<T>();
 
-            configure(specification);
+            configure?.Invoke(specification);
         }
 
         public void ConsumerMessage<T>(Action<IConsumerMessageConfigurator<TConsumer, T>> configure)
             where T : class
         {
-            if (configure == null)
-                throw new ArgumentNullException(nameof(configure));
-
             IConsumerMessageSpecification<TConsumer, T> specification = GetMessageSpecification<T>();
 
-            configure(specification);
+            configure?.Invoke(specification);
         }
 
-        public IConsumerMessageSpecification<TConsumer, T> GetMessageSpecification<T>() where T : class
+        public IConsumerMessageSpecification<TConsumer, T> GetMessageSpecification<T>()
+            where T : class
         {
-            if (!_messageTypes.TryGetValue(typeof(T), out IConsumerMessageSpecification<TConsumer> specification))
+            foreach (IConsumerMessageSpecification<TConsumer> messageSpecification in _messageTypes.Values)
             {
-                throw new ArgumentException($"MessageType {TypeMetadataCache<T>.ShortName} is not consumed by {TypeMetadataCache<TConsumer>.ShortName}");
+                if (messageSpecification.TryGetMessageSpecification(out IConsumerMessageSpecification<TConsumer, T> result))
+                    return result;
             }
 
-            return specification.GetMessageSpecification<T>();
+            throw new ArgumentException($"MessageType {TypeMetadataCache<T>.ShortName} is not consumed by {TypeMetadataCache<TConsumer>.ShortName}");
         }
 
         public IEnumerable<ValidationResult> Validate()
@@ -76,15 +62,21 @@ namespace MassTransit.ConsumerSpecifications
                 return true;
             });
 
-            return _messageTypes.Values.SelectMany(x => x.Validate());
+            foreach (var result in _messageTypes.Values.SelectMany(x => x.Validate()))
+            {
+                yield return result;
+            }
+
+            foreach (var result in ValidateOptions())
+            {
+                yield return result;
+            }
         }
 
         public void AddPipeSpecification(IPipeSpecification<ConsumerConsumeContext<TConsumer>> specification)
         {
             foreach (IConsumerMessageSpecification<TConsumer> messageSpecification in _messageTypes.Values)
-            {
                 messageSpecification.AddPipeSpecification(specification);
-            }
         }
 
         public ConnectHandle ConnectConsumerConfigurationObserver(IConsumerConfigurationObserver observer)

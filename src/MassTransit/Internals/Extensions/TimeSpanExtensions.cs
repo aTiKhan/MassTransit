@@ -11,7 +11,6 @@
         static readonly TimeSpan _month = TimeSpan.FromDays(30);
         static readonly TimeSpan _year = TimeSpan.FromDays(365);
 
-
         public static string ToFriendlyString(this TimeSpan ts)
         {
             if (ts.Equals(_month))
@@ -25,10 +24,10 @@
 
             var sb = new StringBuilder();
 
-            int years = ts.Days / 365;
-            int months = (ts.Days % 365) / 30;
-            int weeks = ((ts.Days % 365) % 30) / 7;
-            int days = (((ts.Days % 365) % 30) % 7);
+            var years = ts.Days / 365;
+            var months = ts.Days % 365 / 30;
+            var weeks = ts.Days % 365 % 30 / 7;
+            var days = ts.Days % 365 % 30 % 7;
 
             if (years > 0)
                 sb.Append(years).Append("y");
@@ -54,7 +53,13 @@
             if (ts.Ticks == 0)
                 sb.Append("-0-");
             else if (sb.Length == 0)
-                sb.Append(ts.Ticks * 100).Append("ns");
+            {
+                var nanos = ts.Ticks * 100;
+                if (nanos > 1000)
+                    sb.Append((nanos + 500) / 1000).Append("\x00B5s");
+                else
+                    sb.Append(nanos).Append("ns");
+            }
 
             return sb.ToString();
         }

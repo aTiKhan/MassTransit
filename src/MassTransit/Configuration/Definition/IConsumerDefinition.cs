@@ -12,6 +12,8 @@ namespace MassTransit.Definition
         /// </summary>
         Type ConsumerType { get; }
 
+        IEndpointDefinition EndpointDefinition { get; }
+
         /// <summary>
         /// Return the endpoint name for the consumer, using the specified formatter if necessary.
         /// </summary>
@@ -25,6 +27,11 @@ namespace MassTransit.Definition
         IConsumerDefinition
         where TConsumer : class, IConsumer
     {
+        /// <summary>
+        /// Sets the endpoint definition, if available
+        /// </summary>
+        new IEndpointDefinition<TConsumer> EndpointDefinition { set; }
+
         /// <summary>
         /// Configure the consumer on the receive endpoint
         /// </summary>

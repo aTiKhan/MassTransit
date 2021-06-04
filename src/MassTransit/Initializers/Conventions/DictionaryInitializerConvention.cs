@@ -6,6 +6,7 @@ namespace MassTransit.Initializers.Conventions
     using System.Text;
     using HeaderInitializers;
     using Internals.Extensions;
+    using Internals.Reflection;
     using PropertyInitializers;
     using PropertyProviders;
 
@@ -67,7 +68,7 @@ namespace MassTransit.Initializers.Conventions
             var propertyName = propertyInfo?.Name ?? throw new ArgumentNullException(nameof(propertyInfo));
 
             // headers use a double underscore prefix
-            string key = new StringBuilder(propertyName.Length + 2).Append("__").Append(propertyName).ToString();
+            var key = new StringBuilder(propertyName.Length + 2).Append("__").Append(propertyName).ToString();
 
             if (typeof(TValue) == typeof(TProperty))
             {

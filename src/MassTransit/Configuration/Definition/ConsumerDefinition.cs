@@ -2,6 +2,7 @@ namespace MassTransit.Definition
 {
     using System;
     using ConsumeConfigurators;
+    using Registration;
 
 
     /// <summary>
@@ -30,8 +31,12 @@ namespace MassTransit.Definition
             set => _endpointName = value;
         }
 
+        public IEndpointDefinition<TConsumer> EndpointDefinition { get; set; }
+
+        IEndpointDefinition IConsumerDefinition.EndpointDefinition => EndpointDefinition;
+
         /// Set the concurrent message limit for the consumer, which limits how many consumers are able to concurrently
-        /// consume messages. 
+        /// consume messages.
         public int? ConcurrentMessageLimit
         {
             get => _concurrentMessageLimit;
@@ -40,7 +45,7 @@ namespace MassTransit.Definition
 
         void IConsumerDefinition<TConsumer>.Configure(IReceiveEndpointConfigurator endpointConfigurator, IConsumerConfigurator<TConsumer> consumerConfigurator)
         {
-            if (_concurrentMessageLimit.HasValue)
+            if (_concurrentMessageLimit.HasValue && endpointConfigurator.ConcurrentMessageLimit > _concurrentMessageLimit)
                 consumerConfigurator.UseConcurrentMessageLimit(_concurrentMessageLimit.Value);
 
             ConfigureConsumer(endpointConfigurator, consumerConfigurator);
@@ -51,28 +56,21 @@ namespace MassTransit.Definition
         string IConsumerDefinition.GetEndpointName(IEndpointNameFormatter formatter)
         {
             return string.IsNullOrWhiteSpace(_endpointName)
-                ? _endpointName = formatter.Consumer<TConsumer>()
+                ? _endpointName = EndpointDefinition?.GetEndpointName(formatter) ?? formatter.Consumer<TConsumer>()
                 : _endpointName;
         }
 
         /// <summary>
-        /// Define a message handled by the consumer
+        /// Configure the consumer endpoint
         /// </summary>
         /// <param name="configure"></param>
-        /// <typeparam name="T">The message type</typeparam>
-        protected void Message<T>(Action<IConsumerMessageDefinitionConfigurator<TConsumer, T>> configure = null)
-            where T : class
+        protected void Endpoint(Action<IConsumerEndpointRegistrationConfigurator<TConsumer>> configure)
         {
-        }
+            var configurator = new ConsumerEndpointRegistrationConfigurator<TConsumer>();
 
-        /// <summary>
-        /// Define the request message handled by the consumer
-        /// </summary>
-        /// <param name="configure"></param>
-        /// <typeparam name="T">The message type</typeparam>
-        protected void Request<T>(Action<IConsumerRequestDefinitionConfigurator<TConsumer, T>> configure = null)
-            where T : class
-        {
+            configure?.Invoke(configurator);
+
+            EndpointDefinition = new ConsumerEndpointDefinition<TConsumer>(configurator.Settings);
         }
 
         /// <summary>

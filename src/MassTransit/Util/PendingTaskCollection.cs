@@ -2,7 +2,6 @@ namespace MassTransit.Util
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using GreenPipes.Internals.Extensions;
@@ -10,19 +9,18 @@ namespace MassTransit.Util
 
     public class PendingTaskCollection
     {
-        readonly CancellationToken _cancellationToken;
         readonly IDictionary<long, Task> _tasks;
         long _nextId;
 
-        public PendingTaskCollection(CancellationToken cancellationToken = default)
-            : this(4, cancellationToken)
+        public PendingTaskCollection(int capacity)
         {
+            _tasks = new Dictionary<long, Task>(capacity);
         }
 
-        public PendingTaskCollection(int capacity, CancellationToken cancellationToken = default)
+        public void Add(IEnumerable<Task> tasks)
         {
-            _cancellationToken = cancellationToken;
-            _tasks = new Dictionary<long, Task>(capacity);
+            foreach (var task in tasks)
+                Add(task);
         }
 
         public void Add(Task task)
@@ -41,23 +39,26 @@ namespace MassTransit.Util
             task.ContinueWith(x => Remove(id), TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously);
         }
 
-        public Task Completed => ReceiveTasksCompleted();
-
-        async Task ReceiveTasksCompleted()
+        public async Task Completed(CancellationToken cancellationToken = default)
         {
-            Task[] tasks = null;
+            Task[] tasks;
             do
             {
                 lock (_tasks)
-                    tasks = _tasks.Values.Where(x => x.Status != TaskStatus.RanToCompletion).ToArray();
+                {
+                    if (_tasks.Count == 0)
+                        return;
 
-                if (tasks.Length == 0)
-                    break;
+                    tasks = new Task[_tasks.Count];
+                    _tasks.Values.CopyTo(tasks, 0);
+
+                    _tasks.Clear();
+                }
 
                 var whenAll = Task.WhenAll(tasks);
 
-                if (_cancellationToken.CanBeCanceled)
-                    whenAll = whenAll.UntilCompletedOrCanceled(_cancellationToken);
+                if (cancellationToken.CanBeCanceled)
+                    whenAll = whenAll.OrCanceled(cancellationToken);
 
                 await whenAll.ConfigureAwait(false);
             }

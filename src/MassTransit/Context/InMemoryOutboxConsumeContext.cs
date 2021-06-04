@@ -2,9 +2,8 @@ namespace MassTransit.Context
 {
     using System;
     using System.Collections.Generic;
-    using System.Threading;
+    using System.Linq;
     using System.Threading.Tasks;
-    using GreenPipes;
     using Util;
 
 
@@ -12,20 +11,31 @@ namespace MassTransit.Context
         ConsumeContextProxy,
         OutboxContext
     {
-        readonly ConsumeContext _context;
         readonly TaskCompletionSource<InMemoryOutboxConsumeContext> _clearToSend;
+        readonly ConsumeContext _context;
+        readonly InMemoryOutboxMessageSchedulerContext _outboxSchedulerContext;
         readonly List<Func<Task>> _pendingActions;
 
         public InMemoryOutboxConsumeContext(ConsumeContext context)
             : base(context)
         {
             _context = context;
+            var outboxReceiveContext = new InMemoryOutboxReceiveContext(this, context.ReceiveContext);
 
-            ReceiveContext = new InMemoryOutboxReceiveContext(this, context.ReceiveContext);
+            ReceiveContext = outboxReceiveContext;
+            PublishEndpointProvider = outboxReceiveContext.PublishEndpointProvider;
 
             _pendingActions = new List<Func<Task>>();
-            _clearToSend = new TaskCompletionSource<InMemoryOutboxConsumeContext>();
+            _clearToSend = TaskUtil.GetTask<InMemoryOutboxConsumeContext>();
+
+            if (context.TryGetPayload(out MessageSchedulerContext schedulerContext))
+            {
+                _outboxSchedulerContext = new InMemoryOutboxMessageSchedulerContext(schedulerContext);
+                context.AddOrUpdatePayload(() => _outboxSchedulerContext, _ => _outboxSchedulerContext);
+            }
         }
+
+        public ConsumeContext CapturedContext => _context;
 
         public Task ClearToSend => _clearToSend.Task;
 
@@ -35,9 +45,7 @@ namespace MassTransit.Context
                 _pendingActions.Add(method);
         }
 
-        public override ReceiveContext ReceiveContext { get; }
-
-        public async Task ExecutePendingActions()
+        public async Task ExecutePendingActions(bool concurrentMessageDelivery)
         {
             _clearToSend.TrySetResult(this);
 
@@ -45,20 +53,66 @@ namespace MassTransit.Context
             lock (_pendingActions)
                 pendingActions = _pendingActions.ToArray();
 
-            foreach (var action in pendingActions)
+            if (pendingActions.Length > 0)
             {
-                var task = action();
-                if (task != null)
-                    await task.ConfigureAwait(false);
+                if (concurrentMessageDelivery)
+                {
+                    var collection = new PendingTaskCollection(pendingActions.Length);
+
+                    collection.Add(pendingActions.Select(action => action()));
+
+                    await collection.Completed().ConfigureAwait(false);
+                }
+                else
+                {
+                    foreach (Func<Task> action in pendingActions)
+                    {
+                        var task = action();
+                        if (task != null)
+                            await task.ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (_outboxSchedulerContext != null)
+            {
+                try
+                {
+                    await _outboxSchedulerContext.ExecutePendingActions().ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    LogContext.Warning?.Log(e, "One or more messages could not be unscheduled.", e);
+                }
             }
         }
 
-        public Task DiscardPendingActions()
+        public async Task DiscardPendingActions()
         {
             lock (_pendingActions)
                 _pendingActions.Clear();
 
-            return TaskUtil.Completed;
+            if (_outboxSchedulerContext != null)
+            {
+                try
+                {
+                    await _outboxSchedulerContext.CancelAllScheduledMessages().ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    LogContext.Warning?.Log(e, "One or more messages could not be unscheduled.", e);
+                }
+            }
+        }
+
+        public override Task NotifyConsumed<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType)
+        {
+            return _context.NotifyConsumed(context, duration, consumerType);
+        }
+
+        public override Task NotifyFaulted<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType, Exception exception)
+        {
+            return _context.NotifyFaulted(context, duration, consumerType, exception);
         }
     }
 
@@ -80,12 +134,12 @@ namespace MassTransit.Context
 
         public virtual Task NotifyConsumed(TimeSpan duration, string consumerType)
         {
-            return base.NotifyConsumed(this, duration, consumerType);
+            return NotifyConsumed(this, duration, consumerType);
         }
 
         public virtual Task NotifyFaulted(TimeSpan duration, string consumerType, Exception exception)
         {
-            return base.NotifyFaulted(this, duration, consumerType, exception);
+            return NotifyFaulted(this, duration, consumerType, exception);
         }
     }
 }

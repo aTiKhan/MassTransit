@@ -1,15 +1,3 @@
-// Copyright 2007-2019 Chris Patterson, Dru Sellers, Travis Smith, et. al.
-//
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-// this file except in compliance with the License. You may obtain a copy of the
-// License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software distributed
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
 namespace MassTransit.WindsorIntegration.ScopeProviders
 {
     using System;
@@ -17,9 +5,9 @@ namespace MassTransit.WindsorIntegration.ScopeProviders
     using Castle.MicroKernel;
     using Context;
     using GreenPipes;
+    using Metadata;
     using Scoping;
     using Scoping.ConsumerContexts;
-    using Util;
 
 
     public class WindsorConsumerScopeProvider :
@@ -32,11 +20,6 @@ namespace MassTransit.WindsorIntegration.ScopeProviders
         {
             _kernel = kernel;
             _scopeActions = new List<Action<ConsumeContext>>();
-        }
-
-        public void AddScopeAction(Action<ConsumeContext> action)
-        {
-            _scopeActions.Add(action);
         }
 
         public void Probe(ProbeContext context)
@@ -56,15 +39,14 @@ namespace MassTransit.WindsorIntegration.ScopeProviders
             var scope = _kernel.CreateNewOrUseExistingMessageScope();
             try
             {
-                _kernel.UpdateScope(context);
+                var scopeContext = new ConsumeContextScope(context, _kernel);
 
-                var proxy = new ConsumeContextProxyScope(context);
-                proxy.UpdatePayload(_kernel);
+                _kernel.UpdateScope(scopeContext);
 
                 foreach (Action<ConsumeContext> scopeAction in _scopeActions)
-                    scopeAction(proxy);
+                    scopeAction(scopeContext);
 
-                return new CreatedConsumerScopeContext<IDisposable>(scope, proxy);
+                return new CreatedConsumerScopeContext<IDisposable>(scope, scopeContext);
             }
             catch
             {
@@ -85,7 +67,7 @@ namespace MassTransit.WindsorIntegration.ScopeProviders
                 if (consumer == null)
                     throw new ConsumerException($"Unable to resolve consumer type '{TypeMetadataCache<TConsumer>.ShortName}'.");
 
-                var consumerContext = context.PushConsumer(consumer);
+                var consumerContext = new ConsumerConsumeContextScope<TConsumer, T>(context, consumer);
 
                 return new ExistingConsumerScopeContext<TConsumer, T>(consumerContext, ReleaseComponent);
             }
@@ -93,14 +75,15 @@ namespace MassTransit.WindsorIntegration.ScopeProviders
             var scope = _kernel.CreateNewOrUseExistingMessageScope();
             try
             {
-                _kernel.UpdateScope(context);
+                var scopeContext = new ConsumeContextScope<T>(context, _kernel);
+
+                _kernel.UpdateScope(scopeContext);
 
                 var consumer = _kernel.Resolve<TConsumer>();
                 if (consumer == null)
                     throw new ConsumerException($"Unable to resolve consumer type '{TypeMetadataCache<TConsumer>.ShortName}'.");
 
-                var consumerContext = context.PushConsumerScope(consumer, scope);
-                consumerContext.UpdatePayload(_kernel);
+                var consumerContext = new ConsumerConsumeContextScope<TConsumer, T>(scopeContext, consumer);
 
                 foreach (Action<ConsumeContext> scopeAction in _scopeActions)
                     scopeAction(consumerContext);
@@ -112,6 +95,11 @@ namespace MassTransit.WindsorIntegration.ScopeProviders
                 scope?.Dispose();
                 throw;
             }
+        }
+
+        public void AddScopeAction(Action<ConsumeContext> action)
+        {
+            _scopeActions.Add(action);
         }
 
         void ReleaseComponent<T>(T component)
