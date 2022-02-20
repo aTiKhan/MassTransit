@@ -1,7 +1,7 @@
-﻿namespace MassTransit.Azure.ServiceBus.Core
+﻿#nullable enable
+namespace MassTransit
 {
     using System;
-    using Topology;
 
 
     public interface IServiceBusBusFactoryConfigurator :

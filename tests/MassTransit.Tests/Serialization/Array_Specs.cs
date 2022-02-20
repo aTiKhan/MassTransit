@@ -10,7 +10,8 @@
         using Shouldly;
 
 
-        [TestFixture(typeof(JsonMessageSerializer))]
+        [TestFixture(typeof(NewtonsoftJsonMessageSerializer))]
+        [TestFixture(typeof(SystemTextJsonMessageSerializer))]
         public class A_null_array :
             SerializationTest
         {

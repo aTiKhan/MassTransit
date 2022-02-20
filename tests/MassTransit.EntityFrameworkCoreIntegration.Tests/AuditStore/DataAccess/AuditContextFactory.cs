@@ -6,7 +6,8 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests
     using Shared;
 
 
-    public class AuditContextFactory : IDesignTimeDbContextFactory<AuditDbContext>
+    public class AuditContextFactory :
+        IDesignTimeDbContextFactory<AuditDbContext>
     {
         public AuditDbContext CreateDbContext(string[] args)
         {
@@ -14,7 +15,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests
             // we only support command line tools for SQL Server, so use SQL Server if you need to do
             // migrations.
 
-            var optionsBuilder = new SqlServerTestDbParameters().GetDbContextOptions(typeof(AuditDbContext));
+            var optionsBuilder = new SqlServerTestDbParameters().GetDbContextOptions<AuditDbContext>();
             return CreateDbContext(optionsBuilder);
         }
 

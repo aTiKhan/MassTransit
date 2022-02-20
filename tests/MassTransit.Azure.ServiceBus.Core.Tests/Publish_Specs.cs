@@ -3,8 +3,7 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
     using System;
     using System.Threading;
     using System.Threading.Tasks;
-    using GreenPipes;
-    using GreenPipes.Internals.Extensions;
+    using Internals;
     using MassTransit.Testing;
     using NUnit.Framework;
     using Serialization;
@@ -195,12 +194,9 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
                 BusTestFixture.ConfigureBusDiagnostics(x);
                 x.Host(serviceUri, h =>
                 {
-                    h.SharedAccessSignature(s =>
+                    h.NamedKey(s =>
                     {
-                        s.KeyName = settings.KeyName;
-                        s.SharedAccessKey = settings.SharedAccessKey;
-                        s.TokenTimeToLive = settings.TokenTimeToLive;
-                        s.TokenScope = settings.TokenScope;
+                        s.NamedKeyCredential = settings.NamedKeyCredential;
                     });
                 });
 

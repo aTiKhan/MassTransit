@@ -1,10 +1,10 @@
 namespace MassTransit.EventHubIntegration.Tests
 {
-    using System.IO;
     using System.Threading.Tasks;
     using Azure.Messaging.EventHubs;
     using Azure.Messaging.EventHubs.Producer;
     using Context;
+    using Contracts;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using Microsoft.Extensions.Logging;
@@ -56,19 +56,11 @@ namespace MassTransit.EventHubIntegration.Tests
             {
                 await using var producer = new EventHubProducerClient(Configuration.EventHubNamespace, Configuration.EventHubName);
 
-                var serializer = new JsonMessageSerializer();
-
                 var message = new EventHubMessageClass("test");
                 var context = new MessageSendContext<EventHubMessage>(message);
 
-                await using (var stream = new MemoryStream())
-                {
-                    serializer.Serialize(stream, context);
-                    stream.Flush();
-
-                    var eventData = new EventData(stream.ToArray());
-                    await producer.SendAsync(new[] {eventData});
-                }
+                var eventData = new EventData(SystemTextJsonMessageSerializer.Instance.GetMessageBody(context).GetBytes());
+                await producer.SendAsync(new[] { eventData });
 
                 ConsumeContext<EventHubMessage> result = await taskCompletionSource.Task;
 
@@ -109,12 +101,6 @@ namespace MassTransit.EventHubIntegration.Tests
             {
                 _taskCompletionSource.TrySetResult(context);
             }
-        }
-
-
-        public interface EventHubMessage
-        {
-            string Text { get; }
         }
     }
 
@@ -192,11 +178,6 @@ namespace MassTransit.EventHubIntegration.Tests
             {
                 _taskCompletionSource.TrySetResult(context);
             }
-        }
-
-
-        public interface EventHubMessage
-        {
         }
     }
 }

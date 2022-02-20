@@ -11,12 +11,15 @@
         where TInput : class
     {
         readonly IPropertyProvider<TInput, MessageData<TValue>> _inputProvider;
+        readonly IMessageDataReader<TValue> _reader;
         readonly IMessageDataRepository _repository;
 
         public GetMessageDataPropertyProvider(IPropertyProvider<TInput, MessageData<TValue>> inputProvider, IMessageDataRepository repository = default)
         {
             _repository = repository;
             _inputProvider = inputProvider;
+
+            _reader = MessageDataReaderFactory.CreateReader<TValue>();
         }
 
         public Task<MessageData<TValue>> GetProperty<T>(InitializeContext<T, TInput> context)
@@ -32,11 +35,11 @@
                 if (messageData is IInlineMessageData)
                     return Task.FromResult(messageData);
 
-                if (messageData?.Address != null)
+                if (messageData is { HasValue: true } && messageData.Address != null)
                 {
                     var repository = _repository;
                     if (repository != null || context.TryGetPayload(out repository))
-                        return Task.FromResult(MessageDataFactory.Load<TValue>(repository, messageData.Address, context.CancellationToken));
+                        return Task.FromResult(_reader.GetMessageData(repository, messageData.Address, context.CancellationToken));
                 }
 
                 return Task.FromResult(EmptyMessageData<TValue>.Instance);
@@ -52,7 +55,7 @@
                 {
                     var repository = _repository;
                     if (repository != null || context.TryGetPayload(out repository))
-                        return MessageDataFactory.Load<TValue>(repository, messageData.Address, context.CancellationToken);
+                        return _reader.GetMessageData(repository, messageData.Address, context.CancellationToken);
                 }
 
                 return EmptyMessageData<TValue>.Instance;

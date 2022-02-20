@@ -43,6 +43,8 @@ module.exports = {
             path: '/releases/',
             collapsable: true,
             children: [
+              '/releases/v8.0.0',
+              '/releases/v7.2.3',
               '/releases/v7.2.0',
               '/releases/v7.1.8',
               '/releases/v7.1.7',
@@ -177,14 +179,6 @@ module.exports = {
                   '/advanced/middleware/transactions',
                   '/advanced/middleware/custom',
                   '/advanced/middleware/scoped'
-                ]
-              },
-              {
-                title: 'Conductor',
-                path: '/advanced/conductor/',
-                collapsable: true,
-                children: [
-                  '/advanced/conductor/configuration'
                 ]
               },
               '/usage/message-data',

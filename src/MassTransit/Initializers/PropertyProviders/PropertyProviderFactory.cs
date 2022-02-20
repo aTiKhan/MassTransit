@@ -2,11 +2,9 @@ namespace MassTransit.Initializers.PropertyProviders
 {
     using System;
     using System.Collections.Generic;
-    using System.IO;
     using System.Reflection;
     using System.Threading.Tasks;
-    using Automatonymous;
-    using Internals.Extensions;
+    using Internals;
     using Metadata;
     using PropertyConverters;
     using TypeConverters;
@@ -167,7 +165,7 @@ namespace MassTransit.Initializers.PropertyProviders
                         return true;
                     }
 
-                    if (typeof(T).IsInterfaceOrConcreteClass() && TypeMetadataCache<T>.IsValidMessageType && !typeof(TProperty).IsValueTypeOrObject())
+                    if (typeof(T).IsInterfaceOrConcreteClass() && MessageTypeCache<T>.IsValidMessageType && !typeof(TProperty).IsValueTypeOrObject())
                     {
                         var converterType = typeof(TProperty) == typeof(object)
                             ? typeof(InitializePropertyConverter<>).MakeGenericType(typeof(T))
@@ -364,32 +362,19 @@ namespace MassTransit.Initializers.PropertyProviders
 
             public bool TryGetConverter<T, TProperty>(out IPropertyConverter<T, TProperty> converter)
             {
-                if (typeof(TValue) == typeof(string) || typeof(TValue) == typeof(byte[]) || typeof(Stream).IsAssignableFrom(typeof(TValue)))
+                if (typeof(T).ClosesType(typeof(MessageData<>), out Type[] types))
                 {
-                    if (typeof(T).ClosesType(typeof(MessageData<>), out Type[] types) && types[0] == typeof(string))
-                    {
-                        if (typeof(TProperty) == typeof(string) || typeof(TProperty) == typeof(MessageData<string>))
-                        {
-                            converter = new MessageDataPropertyConverter() as IPropertyConverter<T, TProperty>;
-                            return converter != null;
-                        }
-                    }
+                    converter = MessageDataPropertyConverter.Instance as IPropertyConverter<T, TProperty>;
+                    if (converter != null)
+                        return true;
 
-                    if (typeof(T).ClosesType(typeof(MessageData<>), out types) && typeof(Stream).IsAssignableFrom(types[0]))
+                    if (TypeMetadataCache.IsValidMessageDataType(types[0]))
                     {
-                        if (typeof(Stream).IsAssignableFrom(typeof(TProperty)) || typeof(TProperty) == typeof(MessageData<Stream>))
+                        if (typeof(TProperty) == types[0] || typeof(TProperty) == typeof(MessageData<>).MakeGenericType(types[0]))
                         {
-                            converter = new MessageDataPropertyConverter() as IPropertyConverter<T, TProperty>;
-                            return converter != null;
-                        }
-                    }
+                            var converterType = typeof(MessageDataPropertyConverter<>).MakeGenericType(types[0]);
 
-                    if (typeof(T).ClosesType(typeof(MessageData<>), out types) && types[0] == typeof(byte[]))
-                    {
-                        if (typeof(TProperty) == typeof(string) || typeof(TProperty) == typeof(MessageData<string>)
-                            || typeof(TProperty) == typeof(byte[]) || typeof(TProperty) == typeof(MessageData<byte[]>))
-                        {
-                            converter = new MessageDataPropertyConverter() as IPropertyConverter<T, TProperty>;
+                            converter = Activator.CreateInstance(converterType) as IPropertyConverter<T, TProperty>;
                             return converter != null;
                         }
                     }
@@ -737,7 +722,7 @@ namespace MassTransit.Initializers.PropertyProviders
                     return true;
                 }
 
-                if (type.IsInterfaceOrConcreteClass() && TypeMetadataCache.IsValidMessageType(type) && !type.IsValueTypeOrObject())
+                if (type.IsInterfaceOrConcreteClass() && MessageTypeCache.IsValidMessageType(type) && !type.IsValueTypeOrObject())
                 {
                     var factoryType = typeof(InitializerResult<>).MakeGenericType(typeof(TInput), typeof(TInputProperty), typeof(TInputKey),
                         typeof(TInputValue), type);
@@ -833,7 +818,7 @@ namespace MassTransit.Initializers.PropertyProviders
 
                 public bool TryGetConverter<T, TProperty>(out IPropertyConverter<T, TProperty> converter)
                 {
-                    if (typeof(T) == typeof(TObject) && typeof(T).IsInterface && TypeMetadataCache<T>.IsValidMessageType)
+                    if (typeof(T) == typeof(TObject) && typeof(T).IsInterface && MessageTypeCache<T>.IsValidMessageType)
                     {
                         var converterType = typeof(InitializePropertyConverter<,>).MakeGenericType(typeof(T), typeof(TProperty));
 

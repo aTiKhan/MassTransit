@@ -1,13 +1,13 @@
 ﻿namespace MassTransit.Azure.ServiceBus.Core.Tests
 {
     using System;
-    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
-    using MassTransit.Testing;
-    using Microsoft.Azure.ServiceBus;
+    using global::Azure;
+    using global::Azure.Messaging.ServiceBus.Administration;
     using NUnit.Framework;
     using TestFramework;
+    using Testing;
     using TopologyTestTypes;
 
 
@@ -15,18 +15,18 @@
     public class Using_a_subscription_filter_on_int :
         AzureServiceBusTestFixture
     {
-        Task<ConsumeContext<ClientUpdated>> _handled;
-
         [Test]
         public async Task Should_only_match_integers()
         {
-            await Bus.Publish<ClientUpdated>(new {Value = "Invalid"}, x => x.Headers.Set("ClientId", 69));
-            await Bus.Publish<ClientUpdated>(new {Value = "Valid"}, x => x.Headers.Set("ClientId", 27));
+            await Bus.Publish<ClientUpdated>(new { Value = "Invalid" }, x => x.Headers.Set("ClientId", 69));
+            await Bus.Publish<ClientUpdated>(new { Value = "Valid" }, x => x.Headers.Set("ClientId", 27));
 
             ConsumeContext<ClientUpdated> handled = await _handled;
 
             Assert.That(handled.Message.Value, Is.EqualTo("Valid"));
         }
+
+        Task<ConsumeContext<ClientUpdated>> _handled;
 
         protected override void ConfigureServiceBusReceiveEndpoint(IServiceBusReceiveEndpointConfigurator configurator)
         {
@@ -38,7 +38,7 @@
             {
                 x.PrefetchCount = 1;
 
-                x.Rule = new RuleDescription("Only27", new SqlFilter("ClientId = 27"));
+                x.Rule = new CreateRuleOptions("Only27", new SqlRuleFilter("ClientId = 27"));
 
                 _handled = Handled<ClientUpdated>(x);
             });
@@ -79,30 +79,28 @@
                 BusTestFixture.ConfigureBusDiagnostics(x);
                 x.Host(serviceUri, h =>
                 {
-                    h.SharedAccessSignature(s =>
+                    h.NamedKey(s =>
                     {
-                        s.KeyName = settings.KeyName;
-                        s.SharedAccessKey = settings.SharedAccessKey;
-                        s.TokenTimeToLive = settings.TokenTimeToLive;
-                        s.TokenScope = settings.TokenScope;
+                        s.NamedKeyCredential = settings.NamedKeyCredential;
                     });
                 });
 
                 x.ReceiveEndpoint("subscription-input-queue", e =>
                 {
-                    e.Subscribe<MessageA>(subscriptionName, s => s.Filter = new SqlFilter("0 = 1"));
+                    e.Subscribe<MessageA>(subscriptionName, s => s.Filter = new SqlRuleFilter("0 = 1"));
                 });
             });
 
             var busHandle = await bus.StartAsync();
             await busHandle.StopAsync(new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
 
-            IList<RuleDescription> rules = await managementClient.GetRulesAsync(topicName, subscriptionName);
+            AsyncPageable<RuleProperties> pageableRules = managementClient.GetRulesAsync(topicName, subscriptionName);
 
-            Assert.That(rules.Count, Is.EqualTo(1));
-            Assert.That(rules[0].Filter, Is.InstanceOf<SqlFilter>());
+            Assert.That(await pageableRules.Count(), Is.EqualTo(1));
+            var rule = await pageableRules.First();
+            Assert.That(rule.Filter, Is.InstanceOf<SqlRuleFilter>());
 
-            var filter = rules[0].Filter as SqlFilter;
+            var filter = rule.Filter as SqlRuleFilter;
             Assert.That(filter.SqlExpression, Is.EqualTo("0 = 1"));
 
             bus = Bus.Factory.CreateUsingAzureServiceBus(x =>
@@ -110,30 +108,28 @@
                 BusTestFixture.ConfigureBusDiagnostics(x);
                 x.Host(serviceUri, h =>
                 {
-                    h.SharedAccessSignature(s =>
+                    h.NamedKey(s =>
                     {
-                        s.KeyName = settings.KeyName;
-                        s.SharedAccessKey = settings.SharedAccessKey;
-                        s.TokenTimeToLive = settings.TokenTimeToLive;
-                        s.TokenScope = settings.TokenScope;
+                        s.NamedKeyCredential = settings.NamedKeyCredential;
                     });
                 });
 
                 x.ReceiveEndpoint("subscription-input-queue", e =>
                 {
-                    e.Subscribe<MessageA>(subscriptionName, s => s.Filter = new SqlFilter("1 = 1"));
+                    e.Subscribe<MessageA>(subscriptionName, s => s.Filter = new SqlRuleFilter("1 = 1"));
                 });
             });
 
             busHandle = await bus.StartAsync();
             await busHandle.StopAsync(new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
 
-            rules = await managementClient.GetRulesAsync(topicName, subscriptionName);
+            pageableRules = managementClient.GetRulesAsync(topicName, subscriptionName);
 
-            Assert.That(rules.Count, Is.EqualTo(1));
-            Assert.That(rules[0].Filter, Is.InstanceOf<SqlFilter>());
+            Assert.That(await pageableRules.Count(), Is.EqualTo(1));
+            rule = await pageableRules.First();
+            Assert.That(rule.Filter, Is.InstanceOf<SqlRuleFilter>());
 
-            filter = rules[0].Filter as SqlFilter;
+            filter = rule.Filter as SqlRuleFilter;
             Assert.That(filter.SqlExpression, Is.EqualTo("1 = 1"));
         }
 

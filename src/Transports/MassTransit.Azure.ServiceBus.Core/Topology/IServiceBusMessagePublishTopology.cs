@@ -1,10 +1,9 @@
-namespace MassTransit.Azure.ServiceBus.Core.Topology
+namespace MassTransit
 {
-    using Builders;
-    using Configurators;
-    using MassTransit.Topology;
-    using Microsoft.Azure.ServiceBus.Management;
-    using Transport;
+    using Azure.Messaging.ServiceBus.Administration;
+    using AzureServiceBusTransport;
+    using AzureServiceBusTransport.Configuration;
+    using AzureServiceBusTransport.Topology;
 
 
     public interface IServiceBusMessagePublishTopology<TMessage> :
@@ -13,13 +12,13 @@ namespace MassTransit.Azure.ServiceBus.Core.Topology
         where TMessage : class
     {
         /// <summary>
-        /// Returns the topic description for the message type
+        /// Returns the topic options for the message type
         /// </summary>
-        TopicDescription TopicDescription { get; }
+        CreateTopicOptions CreateTopicOptions { get; }
 
         SendSettings GetSendSettings();
 
-        SubscriptionConfigurator GetSubscriptionConfigurator(string subscriptionName);
+        ServiceBusSubscriptionConfigurator GetSubscriptionConfigurator(string subscriptionName);
     }
 
 

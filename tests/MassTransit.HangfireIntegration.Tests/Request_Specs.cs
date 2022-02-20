@@ -4,7 +4,6 @@
     {
         using System;
         using System.Threading.Tasks;
-        using Automatonymous;
         using NUnit.Framework;
         using Saga;
         using Testing;
@@ -83,6 +82,8 @@
                 var settings = new RequestSettingsImpl(ServiceQueueAddress, TestTimeout);
 
                 _machine = new TestStateMachine(settings);
+
+                configurator.UseInMemoryOutbox();
 
                 configurator.StateMachineSaga(_machine, _repository);
             }

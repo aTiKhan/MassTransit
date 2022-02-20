@@ -1,13 +1,17 @@
 namespace MassTransit.Scheduling
 {
     using System;
-    using Metadata;
 
 
+    [Serializable]
     public class ScheduleMessageCommand<T> :
-        ScheduleMessage<T>
+        ScheduleMessage
         where T : class
     {
+        public ScheduleMessageCommand()
+        {
+        }
+
         public ScheduleMessageCommand(DateTime scheduledTime, Uri destination, T payload, Guid tokenId)
         {
             CorrelationId = tokenId;
@@ -19,13 +23,25 @@ namespace MassTransit.Scheduling
             Destination = destination;
             Payload = payload;
 
-            PayloadType = TypeMetadataCache<T>.MessageTypeNames;
+            PayloadType = MessageTypeCache<T>.MessageTypeNames;
         }
 
-        public Guid CorrelationId { get; }
-        public DateTime ScheduledTime { get; }
-        public string[] PayloadType { get; }
-        public Uri Destination { get; }
-        public T Payload { get; }
+        public Guid CorrelationId { get; set; }
+        public DateTime ScheduledTime { get; set; }
+        public string[] PayloadType { get; set; }
+        public Uri Destination { get; set; }
+        public object Payload { get; set; }
+    }
+
+
+    [Serializable]
+    public class ScheduleMessageCommand :
+        ScheduleMessage
+    {
+        public Guid CorrelationId { get; set; }
+        public DateTime ScheduledTime { get; set; }
+        public string[] PayloadType { get; set; }
+        public Uri Destination { get; set; }
+        public object Payload { get; set; }
     }
 }

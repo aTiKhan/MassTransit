@@ -2,14 +2,14 @@
 {
     using System;
     using System.Threading.Tasks;
-    using Context;
-    using GreenPipes.Internals.Extensions;
+    using Internals;
     using NUnit.Framework;
     using Scheduling;
     using TestFramework;
     using TestFramework.Messages;
 
 
+    [Category("Flaky")]
     public class Cancel_scheduled_message_through_the_outbox :
         QuartzInMemoryTestFixture
     {
@@ -69,6 +69,7 @@
     }
 
 
+    [Category("Flaky")]
     public class Not_cancel_scheduled_message_with_no_outbox :
         QuartzInMemoryTestFixture
     {

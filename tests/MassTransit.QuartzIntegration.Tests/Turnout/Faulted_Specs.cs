@@ -3,10 +3,7 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
     using System;
     using System.Threading.Tasks;
     using Contracts.JobService;
-    using Definition;
-    using GreenPipes;
     using JobService;
-    using JobService.Configuration;
     using NUnit.Framework;
     using Scheduling;
     using TestFramework;
@@ -19,6 +16,7 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
 
 
     [TestFixture]
+    [Category("Flaky")]
     public class Submitting_a_job_to_turnout_that_faults :
         QuartzInMemoryTestFixture
     {
@@ -115,6 +113,7 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
 
 
     [TestFixture]
+    [Category("Flaky")]
     public class Submitting_a_job_to_turnout_that_faults_with_retry :
         QuartzInMemoryTestFixture
     {
@@ -222,6 +221,7 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
 
 
     [TestFixture]
+    [Category("Flaky")]
     public class Submitting_a_job_to_turnout_that_is_abandoned :
         QuartzInMemoryTestFixture
     {
@@ -299,7 +299,10 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
 
             configurator.ServiceInstance(options, instance =>
             {
-                instance.ConfigureJobServiceEndpoints();
+                instance.ConfigureJobServiceEndpoints(x =>
+                {
+                    x.SuspectJobRetryCount = 0;
+                });
 
                 instance.ReceiveEndpoint(instance.EndpointNameFormatter.Message<GrindTheGears>(), e =>
                 {
@@ -333,6 +336,7 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
 
 
     [TestFixture]
+    [Category("Flaky")]
     public class Submitting_a_job_to_turnout_that_is_abandoned_and_retried :
         QuartzInMemoryTestFixture
     {

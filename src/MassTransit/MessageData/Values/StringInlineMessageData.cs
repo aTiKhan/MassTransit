@@ -2,7 +2,6 @@ namespace MassTransit.MessageData.Values
 {
     using System;
     using System.Threading.Tasks;
-    using Serialization.JsonConverters;
 
 
     public class StringInlineMessageData :
@@ -19,7 +18,7 @@ namespace MassTransit.MessageData.Values
             Value = Task.FromResult(value);
         }
 
-        public void Set(MessageDataReference reference)
+        public void Set(IMessageDataReference reference)
         {
             reference.Text = _value;
             reference.Data = default;

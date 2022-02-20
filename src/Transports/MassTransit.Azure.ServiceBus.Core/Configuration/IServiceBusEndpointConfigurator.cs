@@ -1,4 +1,4 @@
-﻿namespace MassTransit.Azure.ServiceBus.Core
+﻿namespace MassTransit
 {
     using System;
 
@@ -59,7 +59,13 @@
         /// <summary>
         /// Sets the message session timeout period
         /// </summary>
+        [Obsolete("use SessionIdleTimeout, which this method calls through to for now")]
         TimeSpan MessageWaitTimeout { set; }
+
+        /// <summary>
+        /// Sets the message session idle timeout period
+        /// </summary>
+        TimeSpan SessionIdleTimeout { set; }
 
         /// <summary>
         /// Sets the maximum time for locks/sessions to be automatically renewed

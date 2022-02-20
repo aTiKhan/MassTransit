@@ -1,13 +1,17 @@
-﻿namespace MassTransit.ActiveMqTransport.Topology
+﻿namespace MassTransit
 {
     using System;
-    using Builders;
-    using MassTransit.Topology;
+    using ActiveMqTransport;
+    using ActiveMqTransport.Topology;
 
 
     public interface IActiveMqConsumeTopology :
         IConsumeTopology
     {
+        IActiveMqConsumerEndpointQueueNameFormatter ConsumerEndpointQueueNameFormatter { get; }
+
+        IActiveMqTemporaryQueueNameFormatter TemporaryQueueNameFormatter { get; }
+
         new IActiveMqMessageConsumeTopology<T> GetMessageTopology<T>()
             where T : class;
 
@@ -22,6 +26,6 @@
         /// </summary>
         /// <param name="topicName"></param>
         /// <param name="configure"></param>
-        void Bind(string topicName, Action<ITopicBindingConfigurator> configure = null);
+        void Bind(string topicName, Action<IActiveMqTopicBindingConfigurator> configure = null);
     }
 }

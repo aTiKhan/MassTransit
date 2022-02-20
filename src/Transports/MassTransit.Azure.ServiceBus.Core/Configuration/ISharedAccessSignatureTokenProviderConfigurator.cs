@@ -1,15 +1,10 @@
-﻿namespace MassTransit.Azure.ServiceBus.Core
+﻿namespace MassTransit
 {
-    using System;
-    using Microsoft.Azure.ServiceBus.Primitives;
+    using Azure;
 
 
-    public interface ISharedAccessSignatureTokenProviderConfigurator :
-        ITokenProviderConfigurator
+    public interface ISharedAccessSignatureTokenProviderConfigurator
     {
-        string KeyName { set; }
-        string SharedAccessKey { set; }
-        TimeSpan TokenTimeToLive { set; }
-        TokenScope TokenScope { set; }
+        AzureSasCredential SasCredential { set; }
     }
 }

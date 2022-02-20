@@ -1,4 +1,4 @@
-namespace MassTransit.EventHubIntegration
+namespace MassTransit
 {
     using System;
     using System.Threading.Tasks;
@@ -25,9 +25,9 @@ namespace MassTransit.EventHubIntegration
         ushort CheckpointMessageCount { set; }
 
         /// <summary>
-        /// The number of concurrent messages to process. Could increase throughput but will not preserve an order (default: 1)
+        /// The maximum number of messages in a single partition before checkpoint (default: 10000)
         /// </summary>
-        int ConcurrencyLimit { set; }
+        ushort CheckpointMessageLimit { set; }
 
         /// <summary>
         /// Configure <see cref="EventProcessorClientOptions" />

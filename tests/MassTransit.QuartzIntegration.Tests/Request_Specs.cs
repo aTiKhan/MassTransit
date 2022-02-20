@@ -4,13 +4,13 @@
     {
         using System;
         using System.Threading.Tasks;
-        using Automatonymous;
         using NUnit.Framework;
         using Saga;
         using Testing;
 
 
         [TestFixture]
+        [Category("Flaky")]
         public class Sending_a_request_from_a_state_machine :
             QuartzInMemoryTestFixture
         {
@@ -83,6 +83,8 @@
                 var settings = new RequestSettingsImpl(ServiceQueueAddress, QuartzAddress, TestTimeout);
 
                 _machine = new TestStateMachine(settings);
+
+                configurator.UseInMemoryOutbox();
 
                 configurator.StateMachineSaga(_machine, _repository);
             }

@@ -4,6 +4,7 @@
     using System.Threading;
     using System.Threading.Tasks;
     using Context;
+    using Logging;
     using NUnit.Framework;
 
 
@@ -121,12 +122,9 @@
 
                 x.Host(_secondServiceUri, h =>
                 {
-                    h.SharedAccessSignature(s =>
+                    h.NamedKey(s =>
                     {
-                        s.KeyName = settings.KeyName;
-                        s.SharedAccessKey = settings.SharedAccessKey;
-                        s.TokenTimeToLive = settings.TokenTimeToLive;
-                        s.TokenScope = settings.TokenScope;
+                        s.NamedKeyCredential = settings.NamedKeyCredential;
                     });
                 });
 

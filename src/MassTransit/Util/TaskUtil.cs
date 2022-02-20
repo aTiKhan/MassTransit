@@ -1,4 +1,4 @@
-﻿namespace MassTransit.Util
+namespace MassTransit.Util
 {
     using System;
     using System.Runtime.CompilerServices;
@@ -82,7 +82,7 @@
             if (!cancellationToken.CanBeCanceled)
                 throw new ArgumentException("The cancellationToken must support cancellation", nameof(cancellationToken));
 
-            TaskCompletionSource<bool> source = GetTask();
+            TaskCompletionSource<bool> source = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             cancelTask = source.Task;
 

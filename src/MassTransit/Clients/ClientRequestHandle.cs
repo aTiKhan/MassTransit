@@ -4,11 +4,7 @@
     using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
-    using ConsumeConfigurators;
-    using GreenPipes;
-    using GreenPipes.Builders;
-    using GreenPipes.Configurators;
-    using Metadata;
+    using Configuration;
     using Util;
 
 
@@ -27,7 +23,6 @@
         readonly TaskCompletionSource<TRequest> _message;
         readonly IBuildPipeConfigurator<SendContext<TRequest>> _pipeConfigurator;
         readonly TaskCompletionSource<bool> _readyToSend;
-        readonly Guid _requestId;
         readonly Dictionary<Type, HandlerConnectHandle> _responseHandlers;
         readonly Task _send;
         readonly TaskCompletionSource<SendContext<TRequest>> _sendContext;
@@ -48,7 +43,7 @@
             var requestTimeout = timeout.HasValue ? timeout : _context.DefaultTimeout.HasValue ? _context.DefaultTimeout.Value : RequestTimeout.Default;
             _timeToLive = requestTimeout;
 
-            _requestId = requestId ?? NewId.NextGuid();
+            RequestId = requestId ?? NewId.NextGuid();
 
             _taskScheduler = taskScheduler ??
                 (SynchronizationContext.Current == null
@@ -77,7 +72,7 @@
         {
             await _readyToSend.Task.ConfigureAwait(false);
 
-            context.RequestId = _requestId;
+            context.RequestId = ((RequestHandle)this).RequestId;
             context.ResponseAddress = _context.ResponseAddress;
 
             context.Headers.Set(MessageHeaders.Request.Accept, _accept);
@@ -97,9 +92,9 @@
         {
         }
 
-        Guid RequestHandle.RequestId => _requestId;
+        public Guid RequestId { get; }
 
-        RequestTimeout RequestHandle.TimeToLive
+        public RequestTimeout TimeToLive
         {
             set => _timeToLive = value;
         }
@@ -147,7 +142,7 @@
         {
             try
             {
-                var message = await _sendRequestCallback(_requestId, this, _cancellationTokenSource.Token).ConfigureAwait(false);
+                var message = await _sendRequestCallback(((RequestHandle)this).RequestId, this, _cancellationTokenSource.Token).ConfigureAwait(false);
 
                 _message.TrySetResult(message);
             }
@@ -162,7 +157,7 @@
                 if (_sendContext.Task.IsFaulted)
                     await _sendContext.Task.ConfigureAwait(false);
 
-                var requestException = new RequestCanceledException(_requestId.ToString("D"), exception, exception.CancellationToken);
+                var requestException = new RequestCanceledException(((RequestHandle)this).RequestId.ToString("D"), exception, exception.CancellationToken);
 
                 Fail(requestException);
 
@@ -180,7 +175,7 @@
             where T : class
         {
             if (_responseHandlers.ContainsKey(typeof(T)))
-                throw new RequestException($"Only one handler of type {TypeMetadataCache<T>.ShortName} can be registered");
+                throw new RequestException($"Only one handler of type {TypeCache<T>.ShortName} can be registered");
 
             var configurator = new ResponseHandlerConfigurator<T>(_taskScheduler, handler, _send);
 
@@ -189,7 +184,7 @@
             if (_cancellationToken.IsCancellationRequested)
                 return TaskUtil.Cancelled<Response<T>>();
 
-            HandlerConnectHandle<T> handle = configurator.Connect(_context, _requestId);
+            HandlerConnectHandle<T> handle = configurator.Connect(_context, ((RequestHandle)this).RequestId);
 
             _responseHandlers.Add(typeof(T), handle);
 
@@ -201,9 +196,13 @@
             if (_cancellationToken.IsCancellationRequested)
                 return;
 
-            Task MessageHandler(ConsumeContext<Fault<TRequest>> context) => FaultHandler(context);
+            Task MessageHandler(ConsumeContext<Fault<TRequest>> context)
+            {
+                return FaultHandler(context);
+            }
 
-            var connectHandle = _context.ConnectRequestHandler(_requestId, MessageHandler, new PipeConfigurator<ConsumeContext<Fault<TRequest>>>());
+            var connectHandle = _context.ConnectRequestHandler(((RequestHandle)this).RequestId, MessageHandler,
+                new PipeConfigurator<ConsumeContext<Fault<TRequest>>>());
 
             var handle = new FaultHandlerConnectHandle(connectHandle);
 
@@ -214,12 +213,12 @@
         {
             Fail(context.Message);
 
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
 
         void Fail(Fault message)
         {
-            Fail(new RequestFaultException(TypeMetadataCache<TRequest>.ShortName, message));
+            Fail(new RequestFaultException(TypeCache<TRequest>.ShortName, message));
         }
 
         void Fail(Exception exception)
@@ -277,7 +276,7 @@
 
         void TimeoutExpired(object state)
         {
-            var timeoutException = new RequestTimeoutException(_requestId.ToString());
+            var timeoutException = new RequestTimeoutException(((RequestHandle)this).RequestId.ToString());
 
             Fail(timeoutException);
         }

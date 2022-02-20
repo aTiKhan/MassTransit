@@ -1,10 +1,9 @@
-namespace MassTransit.WebJobs.ServiceBusIntegration
+namespace MassTransit
 {
     using System;
     using System.Threading;
     using System.Threading.Tasks;
-    using Microsoft.Azure.ServiceBus;
-    using Saga;
+    using Azure.Messaging.ServiceBus;
 
 
     /// <summary>
@@ -20,7 +19,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task Handle(string queueName, Message message, CancellationToken cancellationToken);
+        Task Handle(string queueName, ServiceBusReceivedMessage message, CancellationToken cancellationToken);
 
         /// <summary>
         /// Configure all registered consumers, sagas, and activities on the receiver and handle the message
@@ -30,7 +29,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task Handle(string topicPath, string subscriptionName, Message message, CancellationToken cancellationToken);
+        Task Handle(string topicPath, string subscriptionName, ServiceBusReceivedMessage message, CancellationToken cancellationToken);
 
         /// <summary>
         /// Configure the specified consumer on the receiver and handle the message
@@ -39,7 +38,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task HandleConsumer<TConsumer>(string queueName, Message message, CancellationToken cancellationToken)
+        Task HandleConsumer<TConsumer>(string queueName, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
             where TConsumer : class, IConsumer;
 
         /// <summary>
@@ -50,7 +49,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task HandleConsumer<TConsumer>(string topicPath, string subscriptionName, Message message, CancellationToken cancellationToken)
+        Task HandleConsumer<TConsumer>(string topicPath, string subscriptionName, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
             where TConsumer : class, IConsumer;
 
         /// <summary>
@@ -60,7 +59,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task HandleSaga<TSaga>(string queueName, Message message, CancellationToken cancellationToken)
+        Task HandleSaga<TSaga>(string queueName, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
             where TSaga : class, ISaga;
 
         /// <summary>
@@ -71,7 +70,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task HandleSaga<TSaga>(string topicPath, string subscriptionName, Message message, CancellationToken cancellationToken)
+        Task HandleSaga<TSaga>(string topicPath, string subscriptionName, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
             where TSaga : class, ISaga;
 
         /// <summary>
@@ -81,7 +80,7 @@ namespace MassTransit.WebJobs.ServiceBusIntegration
         /// <param name="message">The Service Bus message</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        Task HandleExecuteActivity<TActivity>(string queueName, Message message, CancellationToken cancellationToken)
+        Task HandleExecuteActivity<TActivity>(string queueName, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
             where TActivity : class;
     }
 }

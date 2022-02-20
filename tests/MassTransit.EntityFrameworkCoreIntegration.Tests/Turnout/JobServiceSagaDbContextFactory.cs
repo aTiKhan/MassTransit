@@ -1,6 +1,5 @@
 namespace MassTransit.EntityFrameworkCoreIntegration.Tests.Turnout
 {
-    using JobService;
     using Microsoft.EntityFrameworkCore;
     using Microsoft.EntityFrameworkCore.Design;
     using Shared;
@@ -11,13 +10,13 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.Turnout
     {
         public JobServiceSagaDbContext CreateDbContext(string[] args)
         {
-            var optionsBuilder = new SqlServerTestDbParameters()
-                .GetDbContextOptions(typeof(JobServiceSagaDbContext));
+            DbContextOptionsBuilder<JobServiceSagaDbContext> optionsBuilder = new SqlServerTestDbParameters()
+                .GetDbContextOptions<JobServiceSagaDbContext>();
 
             return new JobServiceSagaDbContext(optionsBuilder.Options);
         }
 
-        public JobServiceSagaDbContext CreateDbContext(DbContextOptionsBuilder optionsBuilder)
+        public JobServiceSagaDbContext CreateDbContext(DbContextOptionsBuilder<JobServiceSagaDbContext> optionsBuilder)
         {
             return new JobServiceSagaDbContext(optionsBuilder.Options);
         }

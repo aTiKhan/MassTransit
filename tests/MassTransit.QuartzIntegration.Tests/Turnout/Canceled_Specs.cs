@@ -3,13 +3,12 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
     using System;
     using System.Threading.Tasks;
     using Contracts.JobService;
-    using Definition;
     using JobService;
-    using JobService.Configuration;
     using NUnit.Framework;
 
 
     [TestFixture]
+    [Category("Flaky")]
     public class Submitting_a_job_to_turnout_that_is_cancelled :
         QuartzInMemoryTestFixture
     {

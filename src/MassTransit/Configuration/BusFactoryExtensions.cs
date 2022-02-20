@@ -4,10 +4,6 @@
     using System.Collections.Generic;
     using System.Linq;
     using Configuration;
-    using Configurators;
-    using Context;
-    using GreenPipes;
-    using Util;
 
 
     public static class BusFactoryExtensions
@@ -30,7 +26,7 @@
 
             busConfiguration.HostConfiguration.LogContext = LogContext.Current;
 
-            var result = BusConfigurationResult.CompileResults(validationResult);
+            IReadOnlyList<ValidationResult> result = validationResult.ThrowIfContainsFailure("The bus configuration is invalid:");
 
             try
             {
@@ -40,13 +36,13 @@
 
                 var bus = new MassTransitBus(host, busConfiguration.BusObservers, busReceiveEndpointConfiguration);
 
-                TaskUtil.Await(() => busConfiguration.BusObservers.PostCreate(bus));
+                busConfiguration.BusObservers.PostCreate(bus);
 
                 return bus;
             }
             catch (Exception ex)
             {
-                TaskUtil.Await(() => busConfiguration.BusObservers.CreateFaulted(ex));
+                busConfiguration.BusObservers.CreateFaulted(ex);
 
                 throw new ConfigurationException(result, "An exception occurred during bus creation", ex);
             }

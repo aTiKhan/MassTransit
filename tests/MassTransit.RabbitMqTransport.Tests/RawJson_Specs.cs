@@ -1,11 +1,12 @@
 namespace MassTransit.RabbitMqTransport.Tests
 {
     using System;
+    using System.IO;
     using System.Linq;
     using System.Text;
+    using System.Text.Json;
     using System.Threading.Tasks;
     using Initializers;
-    using Newtonsoft.Json;
     using NUnit.Framework;
     using Serialization;
     using TestFramework.Messages;
@@ -18,30 +19,29 @@ namespace MassTransit.RabbitMqTransport.Tests
         [Test]
         public async Task Should_deserialize()
         {
-            var contract = await MessageInitializerCache<RawContract>.InitializeMessage(new
+            var (message, _) = await MessageInitializerCache<RawContract>.InitializeMessage(new
             {
                 Name = "Frank",
                 Value = 27,
                 InVar.Timestamp
             });
 
-            var jsonText = JsonConvert.SerializeObject(contract, JsonMessageSerializer.SerializerSettings);
-            byte[] body = Encoding.UTF8.GetBytes(jsonText);
+            var body = JsonSerializer.SerializeToUtf8Bytes(message, SystemTextJsonMessageSerializer.Options);
 
             SendRawMessage(body);
 
             ConsumeContext<RawContract> received = await _receivedA;
 
-            Assert.AreEqual(contract.Name, received.Message.Name);
-            Assert.AreEqual(contract.Value, received.Message.Value);
-            Assert.AreEqual(contract.Timestamp, received.Message.Timestamp);
+            Assert.AreEqual(message.Name, received.Message.Name);
+            Assert.AreEqual(message.Value, received.Message.Value);
+            Assert.AreEqual(message.Timestamp, received.Message.Timestamp);
         }
 
         Task<ConsumeContext<RawContract>> _receivedA;
 
         protected override void ConfigureRabbitMqReceiveEndpoint(IRabbitMqReceiveEndpointConfigurator configurator)
         {
-            configurator.ClearMessageDeserializers();
+            configurator.ClearSerialization();
             configurator.UseRawJsonSerializer();
 
             _receivedA = Handled<RawContract>(configurator);
@@ -51,6 +51,82 @@ namespace MassTransit.RabbitMqTransport.Tests
         {
             try
             {
+                TestContext.Out.WriteLine(Encoding.UTF8.GetString(body));
+
+                var settings = GetHostSettings();
+                var connectionFactory = settings.GetConnectionFactory();
+
+                using var connection = settings.EndpointResolver != null
+                    ? connectionFactory.CreateConnection(settings.EndpointResolver, settings.Host)
+                    : connectionFactory.CreateConnection();
+
+                using var model = connection.CreateModel();
+
+                var properties = model.CreateBasicProperties();
+                properties.SetHeader(MessageHeaders.MessageId, "Whiskey-Tango-Foxtrot 3-5-9er");
+
+                model.BasicPublish(RabbitMqTestHarness.InputQueueName, "", false, properties, body);
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(exception);
+            }
+        }
+
+
+        public interface RawContract
+        {
+            string Name { get; }
+            int Value { get; }
+            DateTime Timestamp { get; }
+        }
+    }
+
+
+    [TestFixture]
+    public class Sending_raw_xml_with_no_content_type :
+        RabbitMqTestFixture
+    {
+        [Test]
+        public async Task Should_deserialize()
+        {
+            var (message, _) = await MessageInitializerCache<RawContract>.InitializeMessage(new
+            {
+                Name = "Frank",
+                Value = 27,
+                InVar.Timestamp
+            });
+
+            await using var ms = new MemoryStream(4000);
+            NewtonsoftXmlMessageSerializer.Serialize(ms, message, typeof(RawContract));
+
+            var body = ms.ToArray();
+
+            SendRawMessage(body);
+
+            ConsumeContext<RawContract> received = await _receivedA;
+
+            Assert.AreEqual(message.Name, received.Message.Name);
+            Assert.AreEqual(message.Value, received.Message.Value);
+            Assert.AreEqual(message.Timestamp, received.Message.Timestamp);
+        }
+
+        Task<ConsumeContext<RawContract>> _receivedA;
+
+        protected override void ConfigureRabbitMqReceiveEndpoint(IRabbitMqReceiveEndpointConfigurator configurator)
+        {
+            configurator.ClearSerialization();
+            configurator.UseRawXmlSerializer();
+
+            _receivedA = Handled<RawContract>(configurator);
+        }
+
+        void SendRawMessage(byte[] body)
+        {
+            try
+            {
+                TestContext.Out.WriteLine(Encoding.UTF8.GetString(body));
+
                 var settings = GetHostSettings();
                 var connectionFactory = settings.GetConnectionFactory();
 
@@ -101,7 +177,7 @@ namespace MassTransit.RabbitMqTransport.Tests
 
             ConsumeContext<Command> context = await _handled;
 
-            Assert.That(context.ReceiveContext.ContentType, Is.EqualTo(RawJsonMessageSerializer.RawJsonContentType),
+            Assert.That(context.ReceiveContext.ContentType, Is.EqualTo(SystemTextJsonRawMessageSerializer.JsonContentType),
                 $"unexpected content-type {context.ReceiveContext.ContentType}");
 
             Assert.That(context.Message.CommandId, Is.EqualTo(message.CommandId));
@@ -165,17 +241,17 @@ namespace MassTransit.RabbitMqTransport.Tests
             await InputQueueSendEndpoint.Send(message, x =>
             {
                 x.Headers.Set(headerName, headerValue);
-                x.Serializer = new RawJsonMessageSerializer();
+                x.Serializer = new NewtonsoftRawJsonMessageSerializer();
             });
 
             ConsumeContext<Command> commandContext = await _handler;
 
-            Assert.That(commandContext.ReceiveContext.ContentType, Is.EqualTo(RawJsonMessageSerializer.RawJsonContentType),
+            Assert.That(commandContext.ReceiveContext.ContentType, Is.EqualTo(NewtonsoftRawJsonMessageSerializer.RawJsonContentType),
                 $"unexpected content-type {commandContext.ReceiveContext.ContentType}");
 
             ConsumeContext<PingMessage> context = await _handled;
 
-            Assert.That(context.ReceiveContext.ContentType, Is.EqualTo(JsonMessageSerializer.JsonContentType),
+            Assert.That(context.ReceiveContext.ContentType, Is.EqualTo(NewtonsoftJsonMessageSerializer.JsonContentType),
                 $"unexpected content-type {context.ReceiveContext.ContentType}");
 
             Assert.That(context.Message.CorrelationId, Is.EqualTo(message.CommandId));
@@ -196,10 +272,9 @@ namespace MassTransit.RabbitMqTransport.Tests
 
         protected override void ConfigureRabbitMqReceiveEndpoint(IRabbitMqReceiveEndpointConfigurator configurator)
         {
-            configurator.AddMessageDeserializer(RawJsonMessageSerializer.RawJsonContentType,
-                () => new RawJsonMessageDeserializer(RawJsonMessageSerializer.Deserializer));
+            configurator.UseNewtonsoftRawJsonDeserializer();
 
-            var handler = GetTask<ConsumeContext<Command>>();
+            TaskCompletionSource<ConsumeContext<Command>> handler = GetTask<ConsumeContext<Command>>();
             _handler = handler.Task;
 
             Handler<Command>(configurator, async context =>

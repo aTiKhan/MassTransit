@@ -1,9 +1,17 @@
-﻿namespace MassTransit.RabbitMqTransport.Testing
+﻿namespace MassTransit.Testing
 {
     using System;
-    using Configurators;
-    using MassTransit.Testing;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Net.Http;
+    using System.Net.Http.Headers;
+    using System.Text;
+    using System.Text.Json;
+    using System.Threading.Tasks;
     using RabbitMQ.Client;
+    using RabbitMqTransport;
+    using RabbitMqTransport.Configuration;
+    using Serialization;
     using Transports;
 
 
@@ -84,6 +92,49 @@
             ConfigureHostSettings(host);
 
             return host.Settings;
+        }
+
+        public override async Task Clean()
+        {
+            var settings = GetHostSettings();
+
+            var connectionFactory = settings.GetConnectionFactory();
+
+            using var connection = settings.EndpointResolver != null
+                ? connectionFactory.CreateConnection(settings.EndpointResolver, settings.Host)
+                : connectionFactory.CreateConnection();
+
+            using var model = connection.CreateModel();
+            model.ConfirmSelect();
+
+            IList<string> exchanges = await GetVirtualHostEntities("exchanges").ConfigureAwait(false);
+            foreach (var exchange in exchanges)
+                model.ExchangeDelete(exchange);
+
+            IList<string> queues = await GetVirtualHostEntities("queues").ConfigureAwait(false);
+            foreach (var queue in queues)
+                model.QueueDelete(queue);
+
+            model.Close();
+
+            CleanVirtualHost = false;
+        }
+
+        async Task<IList<string>> GetVirtualHostEntities(string element)
+        {
+            using var client = new HttpClient();
+            var byteArray = Encoding.ASCII.GetBytes($"{Username}:{Password}");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(byteArray));
+
+            var requestUri = new UriBuilder("http", HostAddress.Host, 15672, $"api/{element}/{HostAddress.AbsolutePath.Trim('/')}").Uri;
+
+            var bytes = await client.GetByteArrayAsync(requestUri);
+
+            var rootElement = JsonSerializer.Deserialize<JsonElement>(bytes, SystemTextJsonMessageSerializer.Options);
+
+            var entities = rootElement.EnumerateArray().Select(x => x.GetProperty("name").GetString()).ToArray();
+
+            return entities.Where(x => !string.IsNullOrWhiteSpace(x) && !x.StartsWith("amq.")).ToList();
         }
 
         protected override IBusControl CreateBus()

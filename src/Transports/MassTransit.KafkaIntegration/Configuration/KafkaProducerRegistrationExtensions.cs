@@ -1,11 +1,12 @@
-namespace MassTransit.KafkaIntegration
+namespace MassTransit
 {
     using System;
     using Confluent.Kafka;
-    using MassTransit.Registration;
-    using Registration;
-    using Scoping;
-    using Transport;
+    using DependencyInjection;
+    using KafkaIntegration;
+    using KafkaIntegration.Configuration;
+    using Microsoft.Extensions.DependencyInjection;
+    using Microsoft.Extensions.DependencyInjection.Extensions;
 
 
     public static class KafkaProducerRegistrationExtensions
@@ -19,7 +20,7 @@ namespace MassTransit.KafkaIntegration
         /// <param name="configure"></param>
         /// <typeparam name="T">The message type</typeparam>
         public static void AddProducer<T>(this IRiderRegistrationConfigurator configurator, string topicName,
-            Action<IRiderRegistrationContext, IKafkaProducerConfigurator<Ignore, T>> configure = null)
+            Action<IRiderRegistrationContext, IKafkaProducerConfigurator<Null, T>> configure = null)
             where T : class
         {
             configurator.AddProducer(topicName, _ => default, configure);
@@ -36,7 +37,7 @@ namespace MassTransit.KafkaIntegration
         /// <typeparam name="T">The message type</typeparam>
         public static void AddProducer<T>(this IRiderRegistrationConfigurator configurator, string topicName,
             ProducerConfig producerConfig,
-            Action<IRiderRegistrationContext, IKafkaProducerConfigurator<Ignore, T>> configure = null)
+            Action<IRiderRegistrationContext, IKafkaProducerConfigurator<Null, T>> configure = null)
             where T : class
         {
             configurator.AddProducer(topicName, producerConfig, _ => default, configure);
@@ -59,7 +60,7 @@ namespace MassTransit.KafkaIntegration
                 throw new ArgumentException(nameof(topicName));
 
             var registration = new KafkaProducerRegistrationConfigurator<TKey, T>(topicName, configure);
-            configurator.Registrar.Register(provider => GetProducer<TKey, T>(topicName, provider));
+            configurator.TryAddScoped(provider => GetProducer<TKey, T>(topicName, provider));
             configurator.AddRegistration(registration);
         }
 
@@ -84,7 +85,7 @@ namespace MassTransit.KafkaIntegration
                 throw new ArgumentNullException(nameof(producerConfig));
 
             var registration = new KafkaProducerRegistrationConfigurator<TKey, T>(topicName, configure, producerConfig);
-            configurator.Registrar.Register(provider => GetProducer<TKey, T>(topicName, provider));
+            configurator.TryAddScoped(provider => GetProducer<TKey, T>(topicName, provider));
             configurator.AddRegistration(registration);
         }
 
@@ -104,7 +105,7 @@ namespace MassTransit.KafkaIntegration
             where T : class
         {
             configurator.AddProducer(topicName, configure);
-            configurator.Registrar.Register<ITopicProducer<T>>(provider =>
+            configurator.TryAddScoped<ITopicProducer<T>>(provider =>
                 new KeyedTopicProducer<TKey, T>(provider.GetRequiredService<ITopicProducer<TKey, T>>(), keyResolver));
         }
 
@@ -125,11 +126,11 @@ namespace MassTransit.KafkaIntegration
             where T : class
         {
             configurator.AddProducer(topicName, producerConfig, configure);
-            configurator.Registrar.Register<ITopicProducer<T>>(provider =>
+            configurator.TryAddScoped<ITopicProducer<T>>(provider =>
                 new KeyedTopicProducer<TKey, T>(provider.GetRequiredService<ITopicProducer<TKey, T>>(), keyResolver));
         }
 
-        static ITopicProducer<TKey, T> GetProducer<TKey, T>(string topicName, IConfigurationServiceProvider provider)
+        static ITopicProducer<TKey, T> GetProducer<TKey, T>(string topicName, IServiceProvider provider)
             where T : class
         {
             var address = new Uri($"topic:{topicName}");
@@ -137,7 +138,7 @@ namespace MassTransit.KafkaIntegration
             return GetProducer<TKey, T>(address, provider);
         }
 
-        static ITopicProducer<TKey, T> GetProducer<TKey, T>(Uri address, IConfigurationServiceProvider provider)
+        static ITopicProducer<TKey, T> GetProducer<TKey, T>(Uri address, IServiceProvider provider)
             where T : class
         {
             var rider = provider.GetRequiredService<IKafkaRider>();

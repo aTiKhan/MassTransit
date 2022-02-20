@@ -1,4 +1,4 @@
-﻿namespace MassTransit.RabbitMqTransport
+﻿namespace MassTransit
 {
     using System;
     using System.Runtime.Serialization;
@@ -17,6 +17,11 @@
 
         public MessageNotConfirmedException(Uri uri, string reason)
             : base(uri, $"The message was not confirmed: {reason}")
+        {
+        }
+
+        public MessageNotConfirmedException(Uri uri, Exception innerException)
+            : base(uri, $"The message was not confirmed: {innerException.Message}", innerException)
         {
         }
 

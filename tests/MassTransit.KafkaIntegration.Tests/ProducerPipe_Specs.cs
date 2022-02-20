@@ -3,7 +3,6 @@ namespace MassTransit.KafkaIntegration.Tests
     using System;
     using System.Threading.Tasks;
     using Confluent.Kafka;
-    using GreenPipes;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using Microsoft.Extensions.Logging;
@@ -42,6 +41,7 @@ namespace MassTransit.KafkaIntegration.Tests
 
                         k.TopicEndpoint<KafkaMessage>(Topic, nameof(ProducerPipe_Specs), c =>
                         {
+                            c.CreateIfMissing();
                             c.AutoOffsetReset = AutoOffsetReset.Earliest;
                             c.ConfigureConsumer<KafkaMessageConsumer>(context);
                         });
@@ -167,6 +167,7 @@ namespace MassTransit.KafkaIntegration.Tests
 
                         k.TopicEndpoint<Guid, KafkaMessage>(Topic, nameof(ProducerPipe_With_KeyResolver_Specs), c =>
                         {
+                            c.CreateIfMissing();
                             c.AutoOffsetReset = AutoOffsetReset.Earliest;
                             c.ConfigureConsumer<KafkaMessageConsumer>(context);
                         });

@@ -5,14 +5,9 @@ namespace MassTransit.PrometheusIntegration.Tests
     using System.Text;
     using System.Threading.Tasks;
     using Contracts.JobService;
-    using Definition;
-    using JobService;
-    using JobService.Configuration;
     using NUnit.Framework;
     using Prometheus;
     using TestFramework;
-    using Testing;
-    using Testing.Indicators;
 
 
     [TestFixture]
@@ -25,29 +20,28 @@ namespace MassTransit.PrometheusIntegration.Tests
             IRequestClient<SubmitJob<TheJob>> requestClient = Bus.CreateRequestClient<SubmitJob<TheJob>>();
 
             var jobId = NewId.NextGuid();
-            Response<JobSubmissionAccepted> response = await requestClient.GetResponse<JobSubmissionAccepted>(new
+            await requestClient.GetResponse<JobSubmissionAccepted>(new
             {
                 JobId = jobId,
-                Job = new {Duration = TimeSpan.FromSeconds(30)}
+                Job = new { Duration = TimeSpan.FromSeconds(30) }
             });
 
-            await _activityMonitor.AwaitBusInactivity(TestCancellationToken);
+            await InactivityTask;
 
-            using var stream = new MemoryStream();
+            await using var stream = new MemoryStream();
             await Metrics.DefaultRegistry.CollectAndExportAsTextAsync(stream);
 
             var text = Encoding.UTF8.GetString(stream.ToArray());
 
             Console.WriteLine(text);
 
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"AllocateJobSlot\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobSlotAllocated\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobSlotReleased\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobAttemptCreated\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"StartJobAttempt\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"StartJob\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobSubmissionAccepted\"} 1"), "send");
-            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"SubmitJob_TheJob\"} 1"), "send");
+            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"AllocateJobSlot\"} 1"), "allocate");
+            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobSlotAllocated\"} 1"), "allocated");
+            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobSlotReleased\"} 1"), "released");
+            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"StartJobAttempt\"} 1"), "startJobAttempt");
+            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"StartJob\"} 1"), "startJob");
+            Assert.That(text.Contains("mt_send_total{service_name=\"unit_test\",message_type=\"JobSubmissionAccepted\"} 1"), "accepted");
+            Assert.That(text.Contains("mt_publish_total{service_name=\"unit_test\",message_type=\"SubmitJob_TheJob\"} 1"), "submitTheJob");
             Assert.That(
                 text.Contains("mt_consume_total{service_name=\"unit_test\",message_type=\"SubmitJob_TheJob\",consumer_type=\"SubmitJobConsumer_TheJob\"} 1"),
                 "submit job");
@@ -56,11 +50,9 @@ namespace MassTransit.PrometheusIntegration.Tests
                 "submit job");
         }
 
-        IBusActivityMonitor _activityMonitor;
-
         protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
         {
-            base.ConfigureInMemoryBus(configurator);
+            configurator.UseDelayedMessageScheduler();
 
             configurator.UsePrometheusMetrics(serviceName: "unit_test");
 
@@ -81,14 +73,9 @@ namespace MassTransit.PrometheusIntegration.Tests
             });
         }
 
-        protected override void ConnectObservers(IBus bus)
+        public JobConsumer_Specs()
         {
-            _activityMonitor = bus.CreateBusActivityMonitor(TimeSpan.FromMilliseconds(500));
-        }
-
-        protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
-        {
-            configurator.Consumer(() => new TestJobConsumer());
+            TestInactivityTimeout = TimeSpan.FromSeconds(1);
         }
 
 

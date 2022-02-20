@@ -2,7 +2,7 @@ namespace MassTransit.EventHubIntegration.Tests
 {
     using System;
     using System.Threading.Tasks;
-    using Automatonymous;
+    using Contracts;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using Microsoft.Extensions.Logging;
@@ -100,12 +100,6 @@ namespace MassTransit.EventHubIntegration.Tests
         }
 
 
-        public interface EventHubMessage
-        {
-            string Text { get; }
-        }
-
-
         public class TestInstance :
             SagaStateMachineInstance
         {
@@ -125,7 +119,7 @@ namespace MassTransit.EventHubIntegration.Tests
                 Initially(
                     When(Started)
                         .Then(context => context.Instance.Key = context.Data.TestKey)
-                        .Produce(x => Configuration.EventHubName, x => x.Init<EventHubMessage>(new {Text = $"Key: {x.Data.TestKey}"}))
+                        .Produce(x => Configuration.EventHubName, x => x.Init<EventHubMessage>(new { Text = $"Key: {x.Data.TestKey}" }))
                         .TransitionTo(Active));
 
                 SetCompletedWhenFinalized();

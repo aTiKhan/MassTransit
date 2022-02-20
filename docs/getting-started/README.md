@@ -13,7 +13,7 @@ To create a service using MassTransit, create a worker via the Command Prompt.
 
 ```bash
 $ mkdir GettingStarted
-$ dotnet new worker -n GettingStarted
+$ dotnet new mtworker -n GettingStarted
 ```
 
 ## Using the InMemory Transport
@@ -268,7 +268,7 @@ public static IHostBuilder CreateHostBuilder(string[] args) =>
 $ dotnet run
 ```
 
-The output should have changed to show the message consumer generating the output (again, press Control+C to exit). Notice that the bus address now starts with `rabbitmq`.
+The output should have changed to show the message consumer generating the output (again, press Control+C to exit). Notice that the bus address now starts with `sb`.
 
 ``` {11}
 Building...

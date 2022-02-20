@@ -2,19 +2,17 @@ namespace MassTransit.Containers.Tests
 {
     using System;
     using System.Threading.Tasks;
-    using ExtensionsDependencyInjectionIntegration;
-    using Futures;
     using Microsoft.Extensions.DependencyInjection;
     using NUnit.Framework;
-    using TestComponents;
-    using TestComponents.ForkJoint.Tests;
-    using TestComponents.Futures.Tests;
+    using TestFramework;
+    using TestFramework.ForkJoint.Tests;
+    using TestFramework.Futures.Tests;
 
 
     class InMemoryFutureTestFixtureConfigurator :
         IFutureTestFixtureConfigurator
     {
-        public void ConfigureFutureSagaRepository(IServiceCollectionBusConfigurator configurator)
+        public void ConfigureFutureSagaRepository(IBusRegistrationConfigurator configurator)
         {
             configurator.AddSagaRepository<FutureState>()
                 .InMemoryRepository();
@@ -25,6 +23,11 @@ namespace MassTransit.Containers.Tests
         }
 
         public Task OneTimeSetup(IServiceProvider provider)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task OneTimeTearDown(IServiceProvider provider)
         {
             return Task.CompletedTask;
         }

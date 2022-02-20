@@ -15,48 +15,45 @@ namespace MassTransit.Monitoring.Performance
             _factory = factory;
         }
 
-        public Task PostCreate(IBus bus)
+        public void PostCreate(IBus bus)
         {
             bus.ConnectPublishObserver(new PerformanceCounterPublishObserver(_factory));
             bus.ConnectSendObserver(new PerformanceCounterSendObserver(_factory));
             bus.ConnectReceiveObserver(new PerformanceCounterReceiveObserver(_factory));
-
-            return TaskUtil.Completed;
         }
 
-        public Task CreateFaulted(Exception exception)
+        public void CreateFaulted(Exception exception)
         {
-            return TaskUtil.Completed;
         }
 
         public Task PreStart(IBus bus)
         {
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
 
         public Task PostStart(IBus bus, Task<BusReady> busReady)
         {
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
 
         public Task StartFaulted(IBus bus, Exception exception)
         {
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
 
         public Task PreStop(IBus bus)
         {
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
 
         public Task PostStop(IBus bus)
         {
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
 
         public Task StopFaulted(IBus bus, Exception exception)
         {
-            return TaskUtil.Completed;
+            return Task.CompletedTask;
         }
     }
 }

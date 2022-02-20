@@ -1,7 +1,7 @@
-﻿namespace MassTransit.AmazonSqsTransport
+﻿namespace MassTransit
 {
     using System;
-    using GreenPipes;
+    using AmazonSqsTransport;
 
 
     /// <summary>
@@ -9,13 +9,13 @@
     /// </summary>
     public interface IAmazonSqsReceiveEndpointConfigurator :
         IReceiveEndpointConfigurator,
-        IQueueEndpointConfigurator
+        IAmazonSqsQueueEndpointConfigurator
     {
         /// <summary>
         /// Bind an existing exchange for the message type to the receive endpoint by name
         /// </summary>
         /// <typeparam name="T"></typeparam>
-        void Subscribe<T>(Action<ITopicSubscriptionConfigurator> callback = null)
+        void Subscribe<T>(Action<IAmazonSqsTopicSubscriptionConfigurator> callback = null)
             where T : class;
 
         /// <summary>
@@ -23,10 +23,16 @@
         /// </summary>
         /// <param name="topicName">The exchange name</param>
         /// <param name="callback">Configure the exchange and binding</param>
-        void Subscribe(string topicName, Action<ITopicSubscriptionConfigurator> callback = default);
+        void Subscribe(string topicName, Action<IAmazonSqsTopicSubscriptionConfigurator> callback = default);
 
         void ConfigureClient(Action<IPipeConfigurator<ClientContext>> configure);
 
         void ConfigureConnection(Action<IPipeConfigurator<ConnectionContext>> configure);
+
+        /// <summary>
+        /// FIFO queues deliver messages to consumers partitioned by MessageGroupId, in SequenceNumber order. Calling this method will
+        /// disable that behavior.
+        /// </summary>
+        void DisableMessageOrdering();
     }
 }

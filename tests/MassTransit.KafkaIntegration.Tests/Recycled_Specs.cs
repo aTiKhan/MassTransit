@@ -4,7 +4,6 @@ namespace MassTransit.KafkaIntegration.Tests
     using System.Linq;
     using System.Threading.Tasks;
     using Confluent.Kafka;
-    using GreenPipes;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using Microsoft.Extensions.Logging;
@@ -51,6 +50,7 @@ namespace MassTransit.KafkaIntegration.Tests
 
                         k.TopicEndpoint<KafkaMessage>(Topic, nameof(Recycled_Specs), c =>
                         {
+                            c.CreateIfMissing();
                             c.AutoOffsetReset = AutoOffsetReset.Earliest;
                             c.ConfigureConsumer<KafkaMessageConsumer>(context);
                         });

@@ -2,9 +2,8 @@ namespace MassTransit
 {
     using System;
     using Configuration;
-    using Context;
+    using InMemoryTransport.Configuration;
     using Mediator;
-    using Transports.InMemory.Configuration;
 
 
     public static class MediatorConfigurationExtensions
@@ -25,11 +24,16 @@ namespace MassTransit
             var topologyConfiguration = new InMemoryTopologyConfiguration(InMemoryBus.MessageTopology);
             var busConfiguration = new InMemoryBusConfiguration(topologyConfiguration, new Uri("loopback://localhost"));
 
+            if (LogContext.Current != null)
+                busConfiguration.HostConfiguration.LogContext = LogContext.Current;
+
             var endpointConfiguration = busConfiguration.HostConfiguration.CreateReceiveEndpointConfiguration("mediator");
 
             var configurator = new MediatorConfiguration(busConfiguration.HostConfiguration, endpointConfiguration);
 
             configure(configurator);
+
+            configurator.Validate().ThrowIfContainsFailure("The mediator configuration is invalid:");
 
             var mediatorDispatcher = configurator.Build();
 
@@ -39,6 +43,8 @@ namespace MassTransit
             configurator = new MediatorConfiguration(busConfiguration.HostConfiguration, responseEndpointConfiguration);
 
             configure(configurator);
+
+            configurator.Validate().ThrowIfContainsFailure("The mediator response configuration is invalid:");
 
             var responseDispatcher = responseConfigurator.Build();
 

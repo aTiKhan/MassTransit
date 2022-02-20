@@ -1,10 +1,9 @@
-namespace MassTransit.KafkaIntegration
+namespace MassTransit
 {
     using System;
     using System.Collections.Generic;
     using Confluent.Kafka;
-    using Riders;
-    using Serializers;
+    using KafkaIntegration.Serializers;
 
 
     public interface IKafkaFactoryConfigurator :
@@ -64,13 +63,6 @@ namespace MassTransit.KafkaIntegration
         /// importance: low
         /// </summary>
         int? MaxInFlight { set; }
-
-        /// <summary>
-        /// Non-topic request timeout in milliseconds. This is for metadata requests, etc.
-        /// default: 60000
-        /// importance: low
-        /// </summary>
-        TimeSpan? MetadataRequestTimeout { set; }
 
         /// <summary>
         /// Period of time in milliseconds at which topic and broker metadata is refreshed in order to proactively discover any new brokers, topics, partitions or

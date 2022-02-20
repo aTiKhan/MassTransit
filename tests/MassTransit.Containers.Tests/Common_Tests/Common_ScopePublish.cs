@@ -2,40 +2,42 @@ namespace MassTransit.Containers.Tests.Common_Tests
 {
     using System;
     using System.Threading.Tasks;
-    using Context;
-    using GreenPipes;
+    using Autofac.Extensions.DependencyInjection;
+    using Internals;
+    using Microsoft.Extensions.DependencyInjection;
     using NUnit.Framework;
     using Scenarios;
     using TestFramework;
     using Util;
 
 
-    public abstract class Common_ScopePublish<TScope> :
-        InMemoryTestFixture
-        where TScope : class
+    public class Common_ScopePublish<TContainer> :
+        CommonContainerTestFixture<TContainer>
+        where TContainer : ITestFixtureContainerFactory, new()
     {
+        [Test]
+        public async Task Should_contains_scope_on_publish()
+        {
+            await PublishEndpoint.Publish(new SimpleMessageClass("test"));
+
+            var published = await _taskCompletionSource.Task;
+
+            Assert.IsTrue(published.TryGetPayload<IServiceProvider>(out var serviceProvider));
+
+            if(serviceProvider is AutofacServiceProvider)
+                return;
+
+            Assert.AreEqual(serviceProvider, ServiceScope.ServiceProvider);
+        }
+
         readonly TaskCompletionSource<PublishContext> _taskCompletionSource;
 
-        protected Common_ScopePublish()
+        public Common_ScopePublish()
         {
             _taskCompletionSource = GetTask<PublishContext>();
         }
 
-        [Test]
-        public async Task Should_contains_scope_on_publish()
-        {
-            var endpoint = GetPublishEndpoint();
-            await endpoint.Publish(new SimpleMessageClass("test"));
-
-            var published = await _taskCompletionSource.Task;
-
-            Assert.IsTrue(published.TryGetPayload<TScope>(out var scope));
-            AssertScopesAreEqual(scope);
-        }
-
-        protected abstract IPublishEndpoint GetPublishEndpoint();
-
-        protected abstract void AssertScopesAreEqual(TScope actual);
+        IPublishEndpoint PublishEndpoint => ServiceScope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
@@ -44,171 +46,156 @@ namespace MassTransit.Containers.Tests.Common_Tests
 
         protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
         {
-            configurator.ConfigurePublish(cfg => cfg.UseFilter(new TestScopeFilter(_taskCompletionSource)));
-        }
-
-
-        class TestScopeFilter :
-            IFilter<PublishContext>
-        {
-            readonly TaskCompletionSource<PublishContext> _taskCompletionSource;
-
-            public TestScopeFilter(TaskCompletionSource<PublishContext> taskCompletionSource)
-            {
-                _taskCompletionSource = taskCompletionSource;
-            }
-
-            public async Task Send(PublishContext context, IPipe<PublishContext> next)
-            {
-                _taskCompletionSource.TrySetResult(context);
-                await next.Send(context);
-            }
-
-            public void Probe(ProbeContext context)
-            {
-            }
+            configurator.ConfigurePublish(cfg => cfg.UseFilter(new TestPublishContextFilter(_taskCompletionSource)));
         }
     }
 
 
-    public abstract class Common_Publish_Filter :
-        InMemoryTestFixture
+    class TestPublishContextFilter :
+        IFilter<PublishContext>
     {
-        protected readonly TaskCompletionSource<MyId> TaskCompletionSource;
+        readonly TaskCompletionSource<PublishContext> _taskCompletionSource;
 
-        protected Common_Publish_Filter()
+        public TestPublishContextFilter(TaskCompletionSource<PublishContext> taskCompletionSource)
         {
-            TaskCompletionSource = GetTask<MyId>();
+            _taskCompletionSource = taskCompletionSource;
         }
 
-        protected abstract IBusRegistrationContext Registration { get; }
+        public async Task Send(PublishContext context, IPipe<PublishContext> next)
+        {
+            _taskCompletionSource.TrySetResult(context);
+            await next.Send(context);
+        }
 
-        protected abstract MyId MyId { get; }
+        public void Probe(ProbeContext context)
+        {
+        }
+    }
 
-        protected abstract IPublishEndpoint PublishEndpoint { get; }
 
+    public class Common_Publish_Filter<TContainer> :
+        CommonContainerTestFixture<TContainer>
+        where TContainer : ITestFixtureContainerFactory, new()
+    {
         [Test]
         public async Task Should_use_scope()
         {
-            await PublishEndpoint.Publish<SimpleMessageInterface>(new {Name = "test"});
+            await PublishEndpoint.Publish<SimpleMessageInterface>(new { Name = "test" });
 
             var result = await TaskCompletionSource.Task;
             Assert.AreEqual(MyId, result);
         }
 
-        protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
+        protected readonly TaskCompletionSource<MyId> TaskCompletionSource;
+
+        public Common_Publish_Filter()
         {
-            ConfigureFilter(configurator);
+            TaskCompletionSource = GetTask<MyId>();
         }
 
-        protected abstract void ConfigureFilter(IPublishPipelineConfigurator publishPipelineConfigurator);
+        MyId MyId => ServiceScope.ServiceProvider.GetRequiredService<MyId>();
+
+        IPublishEndpoint PublishEndpoint => ServiceScope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
+
+        protected override IServiceCollection ConfigureServices(IServiceCollection collection)
+        {
+            collection.AddScoped(_ => new MyId(Guid.NewGuid()));
+            collection.AddSingleton(TaskCompletionSource);
+
+            return collection;
+        }
+
+        protected override void ConfigureMassTransit(IBusRegistrationConfigurator configurator)
+        {
+            configurator.AddConsumer<SimplerConsumer>();
+        }
+
+        protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
+        {
+            configurator.UsePublishFilter(typeof(TestScopedPublishFilter<>), BusRegistrationContext);
+        }
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
-            configurator.ConfigureConsumer<SimplerConsumer>(Registration);
-        }
-
-        protected void ConfigureRegistration(IBusRegistrationConfigurator configurator)
-        {
-            configurator.AddConsumer<SimplerConsumer>();
-            configurator.AddBus(provider => BusControl);
-        }
-
-
-        protected class ScopedFilter<T> :
-            IFilter<PublishContext<T>>
-            where T : class
-        {
-            readonly MyId _myId;
-            readonly TaskCompletionSource<MyId> _taskCompletionSource;
-
-            public ScopedFilter(TaskCompletionSource<MyId> taskCompletionSource, MyId myId)
-            {
-                _taskCompletionSource = taskCompletionSource;
-                _myId = myId;
-            }
-
-            public Task Send(PublishContext<T> context, IPipe<PublishContext<T>> next)
-            {
-                _taskCompletionSource.TrySetResult(_myId);
-                return next.Send(context);
-            }
-
-            public void Probe(ProbeContext context)
-            {
-            }
+            configurator.ConfigureConsumer<SimplerConsumer>(BusRegistrationContext);
         }
     }
 
 
-    public abstract class Common_Publish_Filter_Outbox :
-        InMemoryTestFixture
+    class TestScopedPublishFilter<T> :
+        IFilter<PublishContext<T>>
+        where T : class
     {
-        protected readonly TaskCompletionSource<MyId> MyIdSource;
-        protected readonly TaskCompletionSource<ProducingConsumer> ConsumerSource;
+        readonly MyId _myId;
+        readonly TaskCompletionSource<MyId> _taskCompletionSource;
 
-        protected Common_Publish_Filter_Outbox()
+        public TestScopedPublishFilter(TaskCompletionSource<MyId> taskCompletionSource, MyId myId)
+        {
+            _taskCompletionSource = taskCompletionSource;
+            _myId = myId;
+        }
+
+        public Task Send(PublishContext<T> context, IPipe<PublishContext<T>> next)
+        {
+            _taskCompletionSource.TrySetResult(_myId);
+            return next.Send(context);
+        }
+
+        public void Probe(ProbeContext context)
+        {
+        }
+    }
+
+
+    public class Common_Publish_Filter_Outbox<TContainer> :
+        CommonContainerTestFixture<TContainer>
+        where TContainer : ITestFixtureContainerFactory, new()
+    {
+        [Test]
+        public async Task Should_use_scope()
+        {
+            await InputQueueSendEndpoint.Send<SimpleMessageInterface>(new { Name = "test" });
+
+            var myId = await MyIdSource.Task.OrCanceled(InMemoryTestHarness.InactivityToken);
+
+            var consumer = await ConsumerSource.Task.OrCanceled(InMemoryTestHarness.InactivityToken);
+
+            Assert.AreEqual(myId, consumer.MyId);
+        }
+
+        protected readonly TaskCompletionSource<ProducingConsumer> ConsumerSource;
+        protected readonly TaskCompletionSource<MyId> MyIdSource;
+
+        public Common_Publish_Filter_Outbox()
         {
             MyIdSource = GetTask<MyId>();
             ConsumerSource = GetTask<ProducingConsumer>();
         }
 
-        protected abstract IBusRegistrationContext Registration { get; }
-
-        [Test]
-        public async Task Should_use_scope()
+        protected override IServiceCollection ConfigureServices(IServiceCollection collection)
         {
-            await InputQueueSendEndpoint.Send<SimpleMessageInterface>(new {Name = "test"});
+            collection.AddScoped(_ => new MyId(Guid.NewGuid()));
+            collection.AddSingleton(ConsumerSource);
+            collection.AddSingleton(MyIdSource);
 
-            var myId = await MyIdSource.Task;
+            return collection;
+        }
 
-            var consumer = await ConsumerSource.Task;
-
-            Assert.AreEqual(myId, consumer.MyId);
+        protected override void ConfigureMassTransit(IBusRegistrationConfigurator configurator)
+        {
+            configurator.AddConsumer<ProducingConsumer>();
         }
 
         protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
         {
-            ConfigureFilter(configurator);
+            configurator.UsePublishFilter(typeof(ProducingScopedFilter<>), BusRegistrationContext);
         }
-
-        protected abstract void ConfigureFilter(IPublishPipelineConfigurator publishPipelineConfigurator);
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
+            configurator.UseMessageScope(ServiceProvider);
             configurator.UseInMemoryOutbox();
-            configurator.ConfigureConsumer<ProducingConsumer>(Registration);
-        }
-
-        protected void ConfigureRegistration(IBusRegistrationConfigurator configurator)
-        {
-            configurator.AddConsumer<ProducingConsumer>();
-            configurator.AddBus(provider => BusControl);
-        }
-
-
-        protected class ScopedFilter<T> :
-            IFilter<PublishContext<T>>
-            where T : class
-        {
-            readonly MyId _myId;
-            readonly TaskCompletionSource<MyId> _taskCompletionSource;
-
-            public ScopedFilter(TaskCompletionSource<MyId> taskCompletionSource, MyId myId)
-            {
-                _taskCompletionSource = taskCompletionSource;
-                _myId = myId;
-            }
-
-            public Task Send(PublishContext<T> context, IPipe<PublishContext<T>> next)
-            {
-                _taskCompletionSource.TrySetResult(_myId);
-                return next.Send(context);
-            }
-
-            public void Probe(ProbeContext context)
-            {
-            }
+            configurator.ConfigureConsumer<ProducingConsumer>(BusRegistrationContext);
         }
 
 
@@ -240,100 +227,125 @@ namespace MassTransit.Containers.Tests.Common_Tests
     }
 
 
-    public abstract class Common_Publish_Filter_Fault :
-        InMemoryTestFixture
+    public class ProducingScopedFilter<T> :
+        IFilter<PublishContext<T>>
+        where T : class
     {
-        protected readonly TaskCompletionSource<ConsumeContext> TaskCompletionSource;
+        readonly MyId _myId;
+        readonly TaskCompletionSource<MyId> _taskCompletionSource;
 
-        protected Common_Publish_Filter_Fault()
+        public ProducingScopedFilter(TaskCompletionSource<MyId> taskCompletionSource, MyId myId)
         {
-            TaskCompletionSource = GetTask<ConsumeContext>();
+            _taskCompletionSource = taskCompletionSource;
+            _myId = myId;
         }
 
-        protected abstract IBusRegistrationContext Registration { get; }
-
-        [Test]
-        public async Task Should_use_scope()
+        public Task Send(PublishContext<T> context, IPipe<PublishContext<T>> next)
         {
-            await InputQueueSendEndpoint.Send<SimpleMessageInterface>(new {Name = "test"});
+            _taskCompletionSource.TrySetResult(_myId);
+            return next.Send(context);
+        }
 
-            var lastConsumer = await FaultyConsumer.LastConsumer;
+        public void Probe(ProbeContext context)
+        {
+        }
+    }
 
-            ConsumeContext<SimpleMessageInterface> lastConsumeContext = await lastConsumer.Last;
 
-            var result = await TaskCompletionSource.Task;
+    public class Common_Publish_Filter_Fault<TContainer> :
+        CommonContainerTestFixture<TContainer>
+        where TContainer : ITestFixtureContainerFactory, new()
+    {
+        [Test]
+        public async Task Should_not_use_scoped_filter_to_publish_fault()
+        {
+            await InputQueueSendEndpoint.Send<SimpleMessageInterface>(new { Name = "test" });
 
-            Assert.That(lastConsumeContext, Is.Not.InstanceOf<MissingConsumeContext>());
+            ConsumeContext<Fault<SimpleMessageInterface>> result = await TaskCompletionSource.Task;
+            Assert.IsNotNull(result);
+            Assert.IsFalse(Marker.Called);
+        }
+
+        protected readonly FilterMarker Marker;
+        protected readonly TaskCompletionSource<ConsumeContext<Fault<SimpleMessageInterface>>> TaskCompletionSource;
+
+        public Common_Publish_Filter_Fault()
+        {
+            TaskCompletionSource = GetTask<ConsumeContext<Fault<SimpleMessageInterface>>>();
+            Marker = new FilterMarker();
+        }
+
+        protected override IServiceCollection ConfigureServices(IServiceCollection collection)
+        {
+            collection.AddSingleton(TaskCompletionSource);
+            collection.AddSingleton(Marker);
+
+            return collection;
+        }
+
+        protected override void ConfigureMassTransit(IBusRegistrationConfigurator configurator)
+        {
+            configurator.AddConsumer<FaultyConsumer>();
         }
 
         protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
         {
-            ConfigureFilter(configurator);
+            configurator.UsePublishFilter(typeof(FaultyScopedFilter<>), BusRegistrationContext);
         }
-
-        protected abstract void ConfigureFilter(IPublishPipelineConfigurator publishPipelineConfigurator);
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
-            configurator.ConfigureConsumer<FaultyConsumer>(Registration);
-        }
-
-        protected void ConfigureRegistration(IBusRegistrationConfigurator configurator)
-        {
-            configurator.AddConsumer<FaultyConsumer>();
-            configurator.AddBus(provider => BusControl);
+            configurator.ConfigureConsumer<FaultyConsumer>(BusRegistrationContext);
         }
 
 
-        protected class ScopedFilter<T> :
-            IFilter<PublishContext<T>>
-            where T : class
+        class FaultyConsumer :
+            IConsumer<SimpleMessageInterface>,
+            IConsumer<Fault<SimpleMessageInterface>>
         {
-            readonly ConsumeContext _consumeContext;
-            readonly TaskCompletionSource<ConsumeContext> _taskCompletionSource;
+            readonly TaskCompletionSource<ConsumeContext<Fault<SimpleMessageInterface>>> _taskCompletionSource;
 
-            public ScopedFilter(TaskCompletionSource<ConsumeContext> taskCompletionSource, ConsumeContext consumeContext)
+            public FaultyConsumer(TaskCompletionSource<ConsumeContext<Fault<SimpleMessageInterface>>> taskCompletionSource)
             {
                 _taskCompletionSource = taskCompletionSource;
-                _consumeContext = consumeContext;
             }
 
-            public Task Send(PublishContext<T> context, IPipe<PublishContext<T>> next)
+            public Task Consume(ConsumeContext<Fault<SimpleMessageInterface>> context)
             {
-                _taskCompletionSource.TrySetResult(_consumeContext);
-                return next.Send(context);
+                _taskCompletionSource.TrySetResult(context);
+                return Task.CompletedTask;
             }
 
-            public void Probe(ProbeContext context)
+            public Task Consume(ConsumeContext<SimpleMessageInterface> context)
             {
+                throw new IntentionalTestException();
             }
         }
+    }
 
 
-        public class FaultyConsumer :
-            IConsumer<SimpleMessageInterface>
+    public class FilterMarker
+    {
+        public bool Called { get; set; }
+    }
+
+
+    public class FaultyScopedFilter<T> :
+        IFilter<PublishContext<T>>
+        where T : class
+    {
+        public FaultyScopedFilter(FilterMarker marker)
         {
-            static readonly TaskCompletionSource<FaultyConsumer> _consumerCreated = TaskUtil.GetTask<FaultyConsumer>();
+            marker.Called = true;
+        }
 
-            readonly TaskCompletionSource<ConsumeContext<SimpleMessageInterface>> _received;
+        public Task Send(PublishContext<T> context, IPipe<PublishContext<T>> next)
+        {
+            return next.Send(context);
+        }
 
-            public FaultyConsumer()
-            {
-                _received = TaskUtil.GetTask<ConsumeContext<SimpleMessageInterface>>();
-
-                _consumerCreated.TrySetResult(this);
-            }
-
-            public Task<ConsumeContext<SimpleMessageInterface>> Last => _received.Task;
-
-            public static Task<FaultyConsumer> LastConsumer => _consumerCreated.Task;
-
-            public async Task Consume(ConsumeContext<SimpleMessageInterface> message)
-            {
-                _received.TrySetResult(message);
-
-                throw new IntentionalTestException("Nothing to see here, move along!");
-            }
+        public void Probe(ProbeContext context)
+        {
         }
     }
 }

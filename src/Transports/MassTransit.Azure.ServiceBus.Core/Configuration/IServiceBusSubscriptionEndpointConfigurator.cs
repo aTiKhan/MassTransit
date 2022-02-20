@@ -1,6 +1,6 @@
-﻿namespace MassTransit.Azure.ServiceBus.Core
+﻿namespace MassTransit
 {
-    using Microsoft.Azure.ServiceBus;
+    using Azure.Messaging.ServiceBus.Administration;
 
 
     /// <summary>
@@ -13,11 +13,11 @@
         /// <summary>
         /// Specify the filter for the subscription
         /// </summary>
-        Filter Filter { set; }
+        RuleFilter Filter { set; }
 
         /// <summary>
         /// Specify a rule for the subscription
         /// </summary>
-        RuleDescription Rule { set; }
+        CreateRuleOptions Rule { set; }
     }
 }

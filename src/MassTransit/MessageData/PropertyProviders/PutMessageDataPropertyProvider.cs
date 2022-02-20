@@ -3,7 +3,6 @@ namespace MassTransit.MessageData.PropertyProviders
     using System;
     using System.IO;
     using System.Threading.Tasks;
-    using GreenPipes;
     using Initializers;
     using Metadata;
     using Util;
@@ -73,35 +72,36 @@ namespace MassTransit.MessageData.PropertyProviders
                 var value = await valueTask.ConfigureAwait(false);
                 if (value is string stringValue)
                 {
-                    MessageData<string> messageData = timeToLive.HasValue
-                        ? await _repository.PutString(stringValue, timeToLive.Value, context.CancellationToken).ConfigureAwait(false)
-                        : await _repository.PutString(stringValue, context.CancellationToken).ConfigureAwait(false);
-
+                    MessageData<string> messageData = await _repository.PutString(stringValue, timeToLive, context.CancellationToken).ConfigureAwait(false);
                     return (MessageData<TValue>)messageData;
                 }
 
                 if (value is byte[] bytesValue)
                 {
-                    MessageData<byte[]> messageData = timeToLive.HasValue
-                        ? await _repository.PutBytes(bytesValue, timeToLive.Value, context.CancellationToken).ConfigureAwait(false)
-                        : await _repository.PutBytes(bytesValue, context.CancellationToken).ConfigureAwait(false);
-
+                    MessageData<byte[]> messageData = await _repository.PutBytes(bytesValue, timeToLive, context.CancellationToken).ConfigureAwait(false);
                     return (MessageData<TValue>)messageData;
                 }
 
                 if (value is Stream streamValue)
                 {
-                    MessageData<Stream> messageData = timeToLive.HasValue
-                        ? await _repository.PutStream(streamValue, timeToLive.Value, context.CancellationToken).ConfigureAwait(false)
-                        : await _repository.PutStream(streamValue, default, context.CancellationToken).ConfigureAwait(false);
-
+                    MessageData<Stream> messageData = await _repository.PutStream(streamValue, timeToLive, context.CancellationToken).ConfigureAwait(false);
                     return (MessageData<TValue>)messageData;
                 }
 
-                throw new MessageDataException("Unsupported message data type: " + TypeMetadataCache<TValue>.ShortName);
+                if (value is { } && TypeMetadataCache.IsValidMessageDataType(value.GetType()))
+                {
+                    var messageData = await _repository.PutObject(value, value.GetType(), timeToLive, context.CancellationToken).ConfigureAwait(false);
+
+                    if (messageData is IInlineMessageData inlineMessageData)
+                        return new InlineMessageData<TValue>(messageData.Address, value, inlineMessageData);
+
+                    return new StoredMessageData<TValue>(messageData.Address, value);
+                }
+
+                throw new MessageDataException("Unsupported message data type: " + TypeCache<TValue>.ShortName);
             }
 
-            throw new MessageDataException("Message data repository was not available: " + TypeMetadataCache<TValue>.ShortName);
+            throw new MessageDataException("Message data repository was not available: " + TypeCache<TValue>.ShortName);
         }
     }
 }

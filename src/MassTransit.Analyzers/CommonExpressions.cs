@@ -133,6 +133,23 @@ namespace MassTransit.Analyzers
             return false;
         }
 
+        public static bool IsEnumerable(this ITypeSymbol type, out ITypeSymbol typeArgument)
+        {
+            if (type.TypeKind == TypeKind.Interface &&
+                type.Name == "IEnumerable" &&
+                type.ContainingNamespace.ToString() == "System.Collections.Generic" &&
+                type is INamedTypeSymbol collectionType &&
+                collectionType.IsGenericType &&
+                collectionType.TypeArguments.Length == 1)
+            {
+                typeArgument = collectionType.TypeArguments[0];
+                return true;
+            }
+
+            typeArgument = null;
+            return false;
+        }
+
         public static bool IsList(this ITypeSymbol type, out ITypeSymbol typeArgument)
         {
             if ((type.TypeKind == TypeKind.Class && type.Name == "List"
@@ -215,8 +232,10 @@ namespace MassTransit.Analyzers
 
         public static bool IsInVar(this ITypeSymbol type, out ITypeSymbol inVarType)
         {
-            if (type.TypeKind == TypeKind.Class &&
-                type.ContainingAssembly.Name == "MassTransit")
+            if (type.TypeKind == TypeKind.Class
+                && type.ContainingNamespace.Name == "Variables"
+                && type.ContainingNamespace.ContainingNamespace.Name == "Initializers"
+                && type.ContainingNamespace.ContainingNamespace.ContainingNamespace.Name == "MassTransit")
             {
                 var inVar = type.Interfaces.FirstOrDefault(i => i.Name == "IInitializerVariable");
                 if (inVar != null &&

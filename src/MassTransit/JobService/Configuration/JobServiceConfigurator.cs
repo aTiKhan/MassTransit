@@ -1,13 +1,10 @@
-namespace MassTransit.JobService.Configuration
+namespace MassTransit.Configuration
 {
     using System;
     using System.Collections.Generic;
-    using Components;
-    using Components.StateMachines;
     using Contracts.JobService;
-    using GreenPipes;
-    using GreenPipes.Partitioning;
-    using Saga;
+    using JobService;
+    using Middleware;
 
 
     public class JobServiceConfigurator<TReceiveEndpointConfigurator> :
@@ -33,7 +30,7 @@ namespace MassTransit.JobService.Configuration
                 ? instanceConfigurator.Options(options)
                 : instanceConfigurator.Options<JobServiceOptions>();
 
-            JobService = new JobService(instanceConfigurator.InstanceAddress, _options);
+            JobService = new JobService(instanceConfigurator, _options);
 
             instanceConfigurator.BusConfigurator.ConnectBusObserver(new JobServiceBusObserver(JobService));
             instanceConfigurator.AddSpecification(this);
