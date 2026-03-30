@@ -2,8 +2,6 @@ namespace MassTransit.RabbitMqTransport.Configuration
 {
     using System;
     using System.Collections.Generic;
-    using Components;
-    using JunkDrawer;
     using MassTransit.Configuration;
     using MassTransit.Middleware;
     using Middleware;
@@ -22,8 +20,7 @@ namespace MassTransit.RabbitMqTransport.Configuration
         readonly IRabbitMqEndpointConfiguration _endpointConfiguration;
         readonly IRabbitMqHostConfiguration _hostConfiguration;
         readonly Lazy<Uri> _inputAddress;
-        readonly IManagementPipe _managementPipe;
-        readonly IBuildPipeConfigurator<ModelContext> _modelConfigurator;
+        readonly IBuildPipeConfigurator<ChannelContext> _channelConfigurator;
         readonly RabbitMqReceiveSettings _settings;
 
         public RabbitMqReceiveEndpointConfiguration(IRabbitMqHostConfiguration hostConfiguration, RabbitMqReceiveSettings settings,
@@ -35,9 +32,8 @@ namespace MassTransit.RabbitMqTransport.Configuration
 
             _endpointConfiguration = endpointConfiguration;
 
-            _managementPipe = new ManagementPipe();
             _connectionConfigurator = new PipeConfigurator<ConnectionContext>();
-            _modelConfigurator = new PipeConfigurator<ModelContext>();
+            _channelConfigurator = new PipeConfigurator<ChannelContext>();
 
             _inputAddress = new Lazy<Uri>(FormatInputAddress);
 
@@ -65,23 +61,32 @@ namespace MassTransit.RabbitMqTransport.Configuration
         {
             var context = CreateRabbitMqReceiveEndpointContext();
 
-            _modelConfigurator.UseFilter(new ConfigureRabbitMqTopologyFilter<ReceiveSettings>(_settings, context.BrokerTopology));
+            _channelConfigurator.UseFilter(new ConfigureRabbitMqTopologyFilter<ReceiveSettings>(_settings, context.BrokerTopology));
 
             if (_hostConfiguration.DeployTopologyOnly)
-                _modelConfigurator.UseFilter(new TransportReadyFilter<ModelContext>(context));
+                _channelConfigurator.UseFilter(new TransportReadyFilter<ChannelContext>(context));
             else
             {
                 if (_settings.PurgeOnStartup)
-                    _modelConfigurator.UseFilter(new PurgeOnStartupFilter(_settings.QueueName));
+                    _channelConfigurator.UseFilter(new PurgeOnStartupFilter(_settings.QueueName));
 
-                _modelConfigurator.UseFilter(new PrefetchCountFilter(_managementPipe, _settings.PrefetchCount));
-
-                _modelConfigurator.UseFilter(new RabbitMqConsumerFilter(context));
+                _channelConfigurator.UseFilter(new PrefetchCountFilter(_settings.PrefetchCount));
+                _channelConfigurator.UseFilter(new ReceiveEndpointDependencyFilter<ChannelContext>(context));
+                _channelConfigurator.UseFilter(new RabbitMqConsumerFilter(context));
             }
 
-            IPipe<ModelContext> modelPipe = _modelConfigurator.Build();
+            IPipe<ChannelContext> channelPipe = _channelConfigurator.Build();
 
-            var transport = new ReceiveTransport<ModelContext>(_hostConfiguration, context, () => context.ModelContextSupervisor, modelPipe);
+            var transport = new ReceiveTransport<ChannelContext>(_hostConfiguration, context, () => context.ChannelContextSupervisor, channelPipe);
+
+            if (IsBusEndpoint && _hostConfiguration.DeployPublishTopology)
+            {
+                var publishTopology = _hostConfiguration.Topology.PublishTopology;
+
+                var brokerTopology = publishTopology.GetPublishBrokerTopology();
+
+                transport.PreStartPipe = new ConfigureRabbitMqTopologyFilter<IPublishTopology>(publishTopology, brokerTopology).ToPipe();
+            }
 
             var receiveEndpoint = new ReceiveEndpoint(transport, context);
 
@@ -156,6 +161,25 @@ namespace MassTransit.RabbitMqTransport.Configuration
             set => _settings.ExclusiveConsumer = value;
         }
 
+        public void Stream(Action<IRabbitMqStreamConfigurator> callback = null)
+        {
+            _settings.QueueArguments[Headers.XQueueType] = "stream";
+
+            var configurator = new RabbitMqStreamConfigurator(_settings);
+
+            callback?.Invoke(configurator);
+        }
+
+        public void Stream(string consumerTag, Action<IRabbitMqStreamConfigurator> callback = null)
+        {
+            if (string.IsNullOrWhiteSpace(consumerTag))
+                throw new ArgumentNullException(nameof(consumerTag));
+
+            _settings.ConsumerTag = consumerTag;
+
+            Stream(callback);
+        }
+
         public bool Lazy
         {
             set => _settings.Lazy = value;
@@ -211,13 +235,22 @@ namespace MassTransit.RabbitMqTransport.Configuration
             _settings.SetQuorumQueue(replicationFactor);
         }
 
-        public void ConnectManagementEndpoint(IReceiveEndpointConfigurator management)
+        public void SetDeliveryAcknowledgementTimeout(TimeSpan timeSpan)
         {
-            var consumer = new SetPrefetchCountConsumer(_managementPipe, _settings.QueueName);
-            management.Instance(consumer);
+            if (timeSpan <= TimeSpan.Zero)
+                throw new ArgumentException("The RabbitMQ consumer timeout must be > 0");
+
+            SetQueueArgument("x-consumer-timeout", (long)timeSpan.TotalMilliseconds);
         }
 
-        public void Bind(string exchangeName, Action<IRabbitMqExchangeBindingConfigurator> callback)
+        public void SetDeliveryAcknowledgementTimeout(int? d = null, int? h = null, int? m = null, int? s = null, int? ms = null)
+        {
+            var value = new TimeSpan(d ?? 0, h ?? 0, m ?? 0, s ?? 0, ms ?? 0);
+
+            SetDeliveryAcknowledgementTimeout(value);
+        }
+
+        public void Bind(string exchangeName, Action<IRabbitMqExchangeToExchangeBindingConfigurator> callback)
         {
             if (exchangeName == null)
                 throw new ArgumentNullException(nameof(exchangeName));
@@ -238,14 +271,19 @@ namespace MassTransit.RabbitMqTransport.Configuration
             DeadLetterExchange = exchangeName;
         }
 
-        public void ConfigureModel(Action<IPipeConfigurator<ModelContext>> configure)
+        public void ConfigureChannel(Action<IPipeConfigurator<ChannelContext>> configure)
         {
-            configure?.Invoke(_modelConfigurator);
+            configure?.Invoke(_channelConfigurator);
         }
 
         public void ConfigureConnection(Action<IPipeConfigurator<ConnectionContext>> configure)
         {
             configure?.Invoke(_connectionConfigurator);
+        }
+
+        public void OverrideConsumerTag(string consumerTag)
+        {
+            _settings.ConsumerTag = consumerTag;
         }
 
         RabbitMqReceiveEndpointContext CreateRabbitMqReceiveEndpointContext()

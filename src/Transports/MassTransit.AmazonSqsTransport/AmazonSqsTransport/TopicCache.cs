@@ -1,122 +1,182 @@
-namespace MassTransit.AmazonSqsTransport
+namespace MassTransit.AmazonSqsTransport;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Amazon.SimpleNotificationService;
+using Amazon.SimpleNotificationService.Model;
+using Internals;
+using Internals.Caching;
+
+
+public class TopicCache :
+    IAsyncDisposable
 {
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using Amazon.SimpleNotificationService;
-    using Amazon.SimpleNotificationService.Model;
-    using Caching;
+    readonly ICache<string, TopicInfo, ITimeToLiveCacheValue<TopicInfo>> _cache;
+    readonly CancellationToken _cancellationToken;
+    readonly IAmazonSimpleNotificationService _client;
+    readonly IDictionary<string, TopicInfo> _durableTopics;
+    Lazy<Task> _loadExistingTopics;
+    bool _topicsLoaded;
 
-
-    public class TopicCache
+    public TopicCache(IAmazonSimpleNotificationService client, CancellationToken cancellationToken)
     {
-        readonly ICache<TopicInfo> _cache;
-        readonly CancellationToken _cancellationToken;
-        readonly IAmazonSimpleNotificationService _client;
-        readonly IDictionary<string, TopicInfo> _durableTopics;
-        readonly IIndex<string, TopicInfo> _nameIndex;
+        _client = client;
+        _cancellationToken = cancellationToken;
 
-        public TopicCache(IAmazonSimpleNotificationService client, CancellationToken cancellationToken)
+        _cache = ClientContextCacheDefaults.CreateCache<string, TopicInfo>();
+
+        _loadExistingTopics = ResetLoadExistingTopics();
+
+        _durableTopics = new Dictionary<string, TopicInfo>();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        TopicInfo[] topicInfos;
+        lock (_durableTopics)
         {
-            _client = client;
-            _cancellationToken = cancellationToken;
-            _cache = new GreenCache<TopicInfo>(ClientContextCacheDefaults.GetCacheSettings());
-            _nameIndex = _cache.AddIndex("entityName", x => x.EntityName);
+            topicInfos = _durableTopics.Values.ToArray();
 
-            _durableTopics = new Dictionary<string, TopicInfo>();
+            _durableTopics.Clear();
         }
 
-        public Task<TopicInfo> Get(Topology.Topic topic)
+        foreach (var topicInfo in topicInfos)
+            await topicInfo.DisposeAsync().ConfigureAwait(false);
+
+        await _cache.Clear().ConfigureAwait(false);
+    }
+
+    public async Task<TopicInfo> Get(Topology.Topic topic, CancellationToken cancellationToken)
+    {
+        if (!_topicsLoaded)
+            await LoadExistingTopics().OrCanceled(cancellationToken).ConfigureAwait(false);
+
+        lock (_durableTopics)
+        {
+            if (_durableTopics.TryGetValue(topic.EntityName, out var topicInfo))
+                return topicInfo;
+        }
+
+        return await _cache.GetOrAdd(topic.EntityName, _ => CreateMissingTopic(topic, cancellationToken)).ConfigureAwait(false);
+    }
+
+    public async Task<TopicInfo> GetByName(string entityName, CancellationToken cancellationToken)
+    {
+        if (!_topicsLoaded)
+            await LoadExistingTopics().OrCanceled(cancellationToken).ConfigureAwait(false);
+
+        lock (_durableTopics)
+        {
+            if (_durableTopics.TryGetValue(entityName, out var topicInfo))
+                return topicInfo;
+        }
+
+        return await _cache.Get(entityName).ConfigureAwait(false);
+    }
+
+    public Task<bool> RemoveByName(string entityName)
+    {
+        lock (_durableTopics)
+            _durableTopics.Remove(entityName);
+
+        return _cache.Remove(entityName);
+    }
+
+    async Task<TopicInfo> CreateMissingTopic(Topology.Topic topic, CancellationToken cancellationToken)
+    {
+        var request = new CreateTopicRequest(topic.EntityName)
+        {
+            Attributes = topic.TopicAttributes.ToDictionary(x => x.Key, x => x.Value.ToString()),
+            Tags = topic.TopicTags.Select(x => new Tag
+            {
+                Key = x.Key,
+                Value = x.Value
+            }).ToList()
+        };
+
+        var createResponse = await _client.CreateTopicAsync(request, cancellationToken).ConfigureAwait(false);
+
+        createResponse.EnsureSuccessfulResponse();
+
+        var attributesResponse = await _client.GetTopicAttributesAsync(createResponse.TopicArn, cancellationToken).ConfigureAwait(false);
+
+        attributesResponse.EnsureSuccessfulResponse();
+
+        var missingTopic = new TopicInfo(topic.EntityName, createResponse.TopicArn, _client, cancellationToken, false);
+
+        if (topic is { Durable: true, AutoDelete: false })
         {
             lock (_durableTopics)
-            {
-                if (_durableTopics.TryGetValue(topic.EntityName, out var queueInfo))
-                    return Task.FromResult(queueInfo);
-            }
+                _durableTopics[missingTopic.EntityName] = missingTopic;
+        }
 
-            return _nameIndex.Get(topic.EntityName, async key =>
+        return missingTopic;
+    }
+
+    Lazy<Task> ResetLoadExistingTopics()
+    {
+        return _loadExistingTopics = new Lazy<Task>(() => LoadExistingTopicsLazy(_cancellationToken));
+    }
+
+    Task LoadExistingTopics()
+    {
+        var result = _loadExistingTopics.Value;
+        if (result.IsFaulted || result.IsCanceled)
+        {
+            lock (this)
             {
-                try
+                result = _loadExistingTopics.Value;
+                if (result.IsFaulted || result.IsCanceled)
+                    result = ResetLoadExistingTopics().Value;
+            }
+        }
+
+        return result;
+    }
+
+    async Task LoadExistingTopicsLazy(CancellationToken cancellationToken)
+    {
+        var cursor = string.Empty;
+        do
+        {
+            var request = new ListTopicsRequest { NextToken = cursor };
+
+            var response = await _client.ListTopicsAsync(request, cancellationToken).ConfigureAwait(false);
+
+            if (response.Topics != null)
+            {
+                foreach (var topic in response.Topics)
                 {
-                    return await GetExistingTopic(topic.EntityName).ConfigureAwait(false);
+                    var index = topic.TopicArn.LastIndexOf(":", StringComparison.OrdinalIgnoreCase);
+                    if (index < 0)
+                        continue;
+
+                    var topicName = topic.TopicArn.Substring(index + 1);
+
+                    await _cache.GetOrAdd(topicName, async _ =>
+                    {
+                        var topicInfo = new TopicInfo(topicName, topic.TopicArn, _client, _cancellationToken, true);
+
+                        lock (_durableTopics)
+                            _durableTopics[topicInfo.EntityName] = topicInfo;
+
+                        return topicInfo;
+                    }).ConfigureAwait(false);
                 }
-                catch (AmazonSqsTransportException e) when (e.Message.Equals($"Topic {topic.EntityName} not found."))
-                {
-                    return await CreateMissingTopic(topic).ConfigureAwait(false);
-                }
-            });
-        }
-
-        public Task<TopicInfo> GetByName(string entityName)
-        {
-            lock (_durableTopics)
-            {
-                if (_durableTopics.TryGetValue(entityName, out var queueInfo))
-                    return Task.FromResult(queueInfo);
             }
 
-            return _nameIndex.Get(entityName, key => GetExistingTopic(key));
+            cursor = response.NextToken;
         }
+        while (!string.IsNullOrEmpty(cursor) && !cancellationToken.IsCancellationRequested);
 
-        public void RemoveByName(string entityName)
-        {
-            lock (_durableTopics)
-                _durableTopics.Remove(entityName);
+        _topicsLoaded = true;
+    }
 
-            _nameIndex.Remove(entityName);
-        }
-
-        async Task<TopicInfo> CreateMissingTopic(Topology.Topic topic)
-        {
-            Dictionary<string, string> attributes = topic.TopicAttributes.ToDictionary(x => x.Key, x => x.Value.ToString());
-
-            var request = new CreateTopicRequest(topic.EntityName)
-            {
-                Attributes = attributes,
-                Tags = topic.TopicTags.Select(x => new Tag
-                {
-                    Key = x.Key,
-                    Value = x.Value
-                }).ToList()
-            };
-
-            var createResponse = await _client.CreateTopicAsync(request, _cancellationToken).ConfigureAwait(false);
-
-            createResponse.EnsureSuccessfulResponse();
-
-            var attributesResponse = await _client.GetTopicAttributesAsync(createResponse.TopicArn, _cancellationToken).ConfigureAwait(false);
-
-            attributesResponse.EnsureSuccessfulResponse();
-
-            var missingTopic = new TopicInfo(topic.EntityName, createResponse.TopicArn, attributesResponse.Attributes);
-
-            if (topic.Durable && topic.AutoDelete == false)
-            {
-                lock (_durableTopics)
-                    _durableTopics[missingTopic.EntityName] = missingTopic;
-            }
-
-            return missingTopic;
-        }
-
-        async Task<TopicInfo> GetExistingTopic(string topicName)
-        {
-            var topic = await _client.FindTopicAsync(topicName).ConfigureAwait(false);
-
-            if (topic == null)
-                throw new AmazonSqsTransportException($"Topic {topicName} not found.");
-
-            var attributesResponse = await _client.GetTopicAttributesAsync(topic.TopicArn, _cancellationToken).ConfigureAwait(false);
-
-            attributesResponse.EnsureSuccessfulResponse();
-
-            return new TopicInfo(topicName, topic.TopicArn, attributesResponse.Attributes);
-        }
-
-        public void Clear()
-        {
-            _cache.Clear();
-        }
+    public void Clear()
+    {
+        _cache.Clear();
     }
 }

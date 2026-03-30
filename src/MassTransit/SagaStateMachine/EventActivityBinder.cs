@@ -5,7 +5,7 @@ namespace MassTransit
 
     public interface EventActivityBinder<TSaga> :
         EventActivities<TSaga>
-        where TSaga : class, ISaga
+        where TSaga : class, SagaStateMachineInstance
     {
         StateMachine<TSaga> StateMachine { get; }
 
@@ -21,6 +21,15 @@ namespace MassTransit
         /// <returns></returns>
         EventActivityBinder<TSaga> Catch<T>(Func<ExceptionActivityBinder<TSaga, T>, ExceptionActivityBinder<TSaga, T>> activityCallback)
             where T : Exception;
+
+        /// <summary>
+        /// Retry the behavior, using the specified retry policy
+        /// </summary>
+        /// <param name="configure">Configures the retry</param>
+        /// <param name="activityCallback"></param>
+        /// <returns></returns>
+        EventActivityBinder<TSaga> Retry(Action<IRetryConfigurator> configure,
+            Func<EventActivityBinder<TSaga>, EventActivityBinder<TSaga>> activityCallback);
 
         /// <summary>
         /// Create a conditional branch of activities for processing
@@ -66,7 +75,7 @@ namespace MassTransit
 
     public interface EventActivityBinder<TSaga, TMessage> :
         EventActivities<TSaga>
-        where TSaga : class, ISaga
+        where TSaga : class, SagaStateMachineInstance
         where TMessage : class
     {
         StateMachine<TSaga> StateMachine { get; }
@@ -86,6 +95,15 @@ namespace MassTransit
         EventActivityBinder<TSaga, TMessage> Catch<T>(
             Func<ExceptionActivityBinder<TSaga, TMessage, T>, ExceptionActivityBinder<TSaga, TMessage, T>> activityCallback)
             where T : Exception;
+
+        /// <summary>
+        /// Retry the behavior, using the specified retry policy
+        /// </summary>
+        /// <param name="configure">Configures the retry</param>
+        /// <param name="activityCallback"></param>
+        /// <returns></returns>
+        EventActivityBinder<TSaga, TMessage> Retry(Action<IRetryConfigurator> configure,
+            Func<EventActivityBinder<TSaga, TMessage>, EventActivityBinder<TSaga, TMessage>> activityCallback);
 
         /// <summary>
         /// Create a conditional branch of activities for processing

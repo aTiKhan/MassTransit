@@ -40,7 +40,7 @@ namespace MassTransit
             return other._bits == _bits;
         }
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             if (ReferenceEquals(null, obj))
                 return false;
@@ -57,6 +57,11 @@ namespace MassTransit
         public void Set(int flag)
         {
             _bits |= flag;
+        }
+
+        public bool IsSet(int flag)
+        {
+            return (_bits & flag) == flag;
         }
     }
 }

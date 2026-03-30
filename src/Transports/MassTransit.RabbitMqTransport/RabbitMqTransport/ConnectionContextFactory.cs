@@ -8,6 +8,7 @@
     using Configuration;
     using Internals;
     using RabbitMQ.Client;
+    using RabbitMQ.Client.Events;
     using RabbitMQ.Client.Exceptions;
     using Transports;
 
@@ -25,37 +26,51 @@
             _connectionFactory = new Lazy<ConnectionFactory>(() => _hostConfiguration.Settings.GetConnectionFactory());
         }
 
-        IPipeContextAgent<ConnectionContext> IPipeContextFactory<ConnectionContext>.CreateContext(ISupervisor supervisor)
+        public IPipeContextAgent<ConnectionContext> CreateContext(ISupervisor supervisor)
         {
             Task<ConnectionContext> context = Task.Run(() => CreateConnection(supervisor), supervisor.Stopped);
 
             IPipeContextAgent<ConnectionContext> contextHandle = supervisor.AddContext(context);
 
-            void HandleShutdown(object sender, ShutdownEventArgs args)
+            Task HandleShutdown(object sender, ShutdownEventArgs args)
             {
-                if (args.Initiator != ShutdownInitiator.Application)
-                    contextHandle.Stop(args.ReplyText);
+                _ = Task.Run(() => contextHandle.Stop(args.ReplyText));
+
+                return Task.CompletedTask;
             }
 
             context.ContinueWith(task =>
             {
-                task.Result.Connection.ConnectionShutdown += HandleShutdown;
+                var connectionContext = task.Result;
 
-                contextHandle.Completed.ContinueWith(_ => task.Result.Connection.ConnectionShutdown -= HandleShutdown);
+                connectionContext.Connection.ConnectionShutdownAsync += HandleShutdown;
+
+                void RemoveHandler(Task _)
+                {
+                    try
+                    {
+                        connectionContext.Connection.ConnectionShutdownAsync -= HandleShutdown;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                }
+
+                contextHandle.Completed.ContinueWith(RemoveHandler);
             }, TaskContinuationOptions.OnlyOnRanToCompletion);
 
             return contextHandle;
         }
 
-        IActivePipeContextAgent<ConnectionContext> IPipeContextFactory<ConnectionContext>.CreateActiveContext(ISupervisor supervisor,
-            PipeContextHandle<ConnectionContext> context, CancellationToken cancellationToken)
+        public IActivePipeContextAgent<ConnectionContext> CreateActiveContext(ISupervisor supervisor, PipeContextHandle<ConnectionContext> context,
+            CancellationToken cancellationToken)
         {
             return supervisor.AddActiveContext(context, CreateSharedConnection(context.Context, cancellationToken));
         }
 
         static async Task<ConnectionContext> CreateSharedConnection(Task<ConnectionContext> context, CancellationToken cancellationToken)
         {
-            return context.IsCompletedSuccessfully()
+            return context.Status == TaskStatus.RanToCompletion
                 ? new SharedConnectionContext(context.Result, cancellationToken)
                 : new SharedConnectionContext(await context.OrCanceled(cancellationToken).ConfigureAwait(false), cancellationToken);
         }
@@ -76,14 +91,15 @@
 
                 if (_hostConfiguration.Settings.EndpointResolver != null)
                 {
-                    connection = _connectionFactory.Value.CreateConnection(_hostConfiguration.Settings.EndpointResolver,
-                        _hostConfiguration.Settings.ClientProvidedName);
+                    connection = await _connectionFactory.Value.CreateConnectionAsync(_hostConfiguration.Settings.EndpointResolver,
+                        _hostConfiguration.Settings.ClientProvidedName).ConfigureAwait(false);
                 }
                 else
                 {
-                    var hostNames = new List<string>(1) { _hostConfiguration.Settings.Host };
+                    List<string> hostNames = [_hostConfiguration.Settings.Host];
 
-                    connection = _connectionFactory.Value.CreateConnection(hostNames, _hostConfiguration.Settings.ClientProvidedName);
+                    connection = await _connectionFactory.Value.CreateConnectionAsync(hostNames, _hostConfiguration.Settings.ClientProvidedName)
+                        .ConfigureAwait(false);
                 }
 
                 LogContext.Debug?.Log("Connected: {Host} (address: {RemoteAddress}, local: {LocalAddress})", description, connection.Endpoint,

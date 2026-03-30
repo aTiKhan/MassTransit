@@ -7,6 +7,7 @@
     using MassTransit.Internals;
     using MassTransit.Middleware;
     using NUnit.Framework;
+    using TestFramework;
 
 
     [TestFixture]
@@ -25,7 +26,7 @@
 
                 supervisor.SetReady();
 
-                Assert.That(async () => await supervisor.Ready.OrTimeout(s: 5), Throws.TypeOf<AggregateException>());
+                Assert.That(async () => await supervisor.Ready.OrTimeout(s: 5), Throws.TypeOf<IntentionalTestException>());
 
                 await supervisor.Stop().OrTimeout(s: 5);
 
@@ -125,8 +126,11 @@
             Assert.That(async () => await supervisor.Send(pipe), Throws.TypeOf<IntentionalTestException>());
             await supervisor.Send(pipe);
 
-            Assert.That(lastValue, Is.EqualTo("2"));
-            Assert.That(count, Is.EqualTo(3));
+            Assert.Multiple(() =>
+            {
+                Assert.That(lastValue, Is.EqualTo("2"));
+                Assert.That(count, Is.EqualTo(3));
+            });
 
             await supervisor.Stop();
 
@@ -153,8 +157,11 @@
             await supervisor.Send(pipe);
             await supervisor.Send(pipe);
 
-            Assert.That(lastValue, Is.EqualTo("2"));
-            Assert.That(count, Is.EqualTo(3));
+            Assert.Multiple(() =>
+            {
+                Assert.That(lastValue, Is.EqualTo("2"));
+                Assert.That(count, Is.EqualTo(3));
+            });
 
             await supervisor.Stop();
 
@@ -241,10 +248,7 @@
 
             public IPipeContextAgent<SimpleContext> CreateContext(ISupervisor supervisor)
             {
-                var context = new SimpleContextImpl
-                {
-                    Value = Interlocked.Increment(ref _id).ToString()
-                };
+                var context = new SimpleContextImpl { Value = Interlocked.Increment(ref _id).ToString() };
 
                 IPipeContextAgent<SimpleContext> contextHandle = supervisor.AddContext<SimpleContext>(context);
 

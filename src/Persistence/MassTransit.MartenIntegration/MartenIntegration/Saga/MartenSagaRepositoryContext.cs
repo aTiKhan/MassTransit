@@ -90,6 +90,7 @@ namespace MassTransit.MartenIntegration.Saga
         public Task Delete(SagaConsumeContext<TSaga> context)
         {
             _session.Delete(context.Saga);
+            _session.Eject(context.Saga);
 
             return _session.SaveChangesAsync(CancellationToken);
         }
@@ -110,7 +111,8 @@ namespace MassTransit.MartenIntegration.Saga
 
     public class MartenSagaRepositoryContext<TSaga> :
         BasePipeContext,
-        SagaRepositoryContext<TSaga>
+        QuerySagaRepositoryContext<TSaga>,
+        LoadSagaRepositoryContext<TSaga>
         where TSaga : class, ISaga
     {
         readonly IQuerySession _session;

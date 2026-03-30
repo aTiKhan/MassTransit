@@ -5,9 +5,11 @@ namespace MassTransit
 
     public interface KafkaConsumeContext
     {
+        string GroupId { get; }
         string Topic { get; }
         int Partition { get; }
         long Offset { get; }
+        bool IsPartitionEof { get; }
         DateTime CheckpointUtcDateTime { get; }
     }
 

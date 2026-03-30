@@ -33,6 +33,15 @@ namespace MassTransit.Serialization
                 || SupportedMessageTypes.Any(x => typeUrn.Equals(x, StringComparison.OrdinalIgnoreCase));
         }
 
+        public override bool IsSupportedMessageType(Type messageType)
+        {
+            var typeUrn = MessageUrn.ForTypeString(messageType);
+
+            return _options.HasFlag(RawSerializerOptions.AnyMessageType)
+                || SupportedMessageTypes.Length == 0
+                || SupportedMessageTypes.Any(x => typeUrn.Equals(x, StringComparison.OrdinalIgnoreCase));
+        }
+
         public override IMessageSerializer GetMessageSerializer()
         {
             return new NewtonsoftRawJsonBodyMessageSerializer(_message, _contentType, _options);
@@ -40,7 +49,7 @@ namespace MassTransit.Serialization
 
         public override IMessageSerializer GetMessageSerializer<T>(MessageEnvelope envelope, T message)
         {
-            var serializer = new NewtonsoftJsonBodyMessageSerializer(envelope, _contentType);
+            var serializer = new NewtonsoftRawJsonBodyMessageSerializer(envelope.Message as JToken, _contentType, _options, envelope.MessageType);
 
             serializer.Overlay(message);
 

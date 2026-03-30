@@ -13,23 +13,31 @@ namespace MassTransit.Internals
 
         public static Task OrCanceled(this Task task, CancellationToken cancellationToken)
         {
-            if (!cancellationToken.CanBeCanceled)
+            if (!cancellationToken.CanBeCanceled || task.IsCompleted)
                 return task;
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                task.IgnoreUnobservedExceptions();
+                throw new OperationCanceledException(cancellationToken);
+            }
 
             async Task WaitAsync()
             {
-                using (RegisterTask(cancellationToken, out var cancelTask))
+            #if NET6_0_OR_GREATER
+                await using var registration = RegisterTask(cancellationToken, out var cancelTask).ConfigureAwait(false);
+            #else
+                using var registration = RegisterTask(cancellationToken, out var cancelTask);
+            #endif
+
+                var completed = await Task.WhenAny(task, cancelTask).ConfigureAwait(false);
+                if (completed != task)
                 {
-                    var completed = await Task.WhenAny(task, cancelTask).ConfigureAwait(false);
-                    if (completed != task)
-                    {
-                        task.IgnoreUnobservedExceptions();
-
-                        throw new OperationCanceledException(cancellationToken);
-                    }
-
-                    task.GetAwaiter().GetResult();
+                    task.IgnoreUnobservedExceptions();
+                    throw new OperationCanceledException(cancellationToken);
                 }
+
+                task.GetAwaiter().GetResult();
             }
 
             return WaitAsync();
@@ -37,23 +45,31 @@ namespace MassTransit.Internals
 
         public static Task<T> OrCanceled<T>(this Task<T> task, CancellationToken cancellationToken)
         {
-            if (!cancellationToken.CanBeCanceled)
+            if (!cancellationToken.CanBeCanceled || task.IsCompleted)
                 return task;
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                task.IgnoreUnobservedExceptions();
+                throw new OperationCanceledException(cancellationToken);
+            }
 
             async Task<T> WaitAsync()
             {
-                using (RegisterTask(cancellationToken, out var cancelTask))
+            #if NET6_0_OR_GREATER
+                await using var registration = RegisterTask(cancellationToken, out var cancelTask).ConfigureAwait(false);
+            #else
+                using var registration = RegisterTask(cancellationToken, out var cancelTask);
+            #endif
+
+                var completed = await Task.WhenAny(task, cancelTask).ConfigureAwait(false);
+                if (completed != task)
                 {
-                    var completed = await Task.WhenAny(task, cancelTask).ConfigureAwait(false);
-                    if (completed != task)
-                    {
-                        task.IgnoreUnobservedExceptions();
-
-                        throw new OperationCanceledException(cancellationToken);
-                    }
-
-                    return task.GetAwaiter().GetResult();
+                    task.IgnoreUnobservedExceptions();
+                    throw new OperationCanceledException(cancellationToken);
                 }
+
+                return task.GetAwaiter().GetResult();
             }
 
             return WaitAsync();
@@ -81,30 +97,28 @@ namespace MassTransit.Internals
             if (task.IsCompleted)
                 return task;
 
+            if (cancellationToken.IsCancellationRequested)
+            {
+                task.IgnoreUnobservedExceptions();
+                throw new TimeoutException(FormatTimeoutMessage(memberName, filePath, lineNumber));
+            }
+
             async Task WaitAsync()
             {
-                var cancel = new CancellationTokenSource();
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var delayTask = Task.Delay(Debugger.IsAttached ? Timeout.InfiniteTimeSpan : timeout, cts.Token);
+                var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
 
-                var registration = RegisterIfCanBeCanceled(cancellationToken, cancel);
-                try
+                if (completed == delayTask)
                 {
-                    var delayTask = Task.Delay(Debugger.IsAttached ? Timeout.InfiniteTimeSpan : timeout, cancel.Token);
+                    task.IgnoreUnobservedExceptions();
 
-                    var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
-                    if (completed == delayTask)
-                    {
-                        task.IgnoreUnobservedExceptions();
-
-                        throw new TimeoutException(FormatTimeoutMessage(memberName, filePath, lineNumber));
-                    }
-
-                    task.GetAwaiter().GetResult();
+                    throw new TimeoutException(FormatTimeoutMessage(memberName, filePath, lineNumber));
                 }
-                finally
-                {
-                    registration.Dispose();
-                    cancel.Cancel();
-                }
+
+                cts.Cancel();
+
+                task.GetAwaiter().GetResult();
             }
 
             return WaitAsync();
@@ -134,30 +148,28 @@ namespace MassTransit.Internals
             if (task.IsCompleted)
                 return task;
 
+            if (cancellationToken.IsCancellationRequested)
+            {
+                task.IgnoreUnobservedExceptions();
+                throw new TimeoutException(FormatTimeoutMessage(memberName, filePath, lineNumber));
+            }
+
             async Task<T> WaitAsync()
             {
-                var cancel = new CancellationTokenSource();
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var delayTask = Task.Delay(Debugger.IsAttached ? Timeout.InfiniteTimeSpan : timeout, cts.Token);
+                var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
 
-                var registration = RegisterIfCanBeCanceled(cancellationToken, cancel);
-                try
+                if (completed == delayTask)
                 {
-                    var delayTask = Task.Delay(Debugger.IsAttached ? Timeout.InfiniteTimeSpan : timeout, cancel.Token);
+                    task.IgnoreUnobservedExceptions();
 
-                    var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
-                    if (completed == delayTask)
-                    {
-                        task.IgnoreUnobservedExceptions();
-
-                        throw new TimeoutException(FormatTimeoutMessage(memberName, filePath, lineNumber));
-                    }
-
-                    return task.GetAwaiter().GetResult();
+                    throw new TimeoutException(FormatTimeoutMessage(memberName, filePath, lineNumber));
                 }
-                finally
-                {
-                    registration.Dispose();
-                    cancel.Cancel();
-                }
+
+                cts.Cancel();
+
+                return task.GetAwaiter().GetResult();
             }
 
             return WaitAsync();
@@ -183,19 +195,58 @@ namespace MassTransit.Internals
         public static void IgnoreUnobservedExceptions(this Task task)
         {
             if (task.IsCompleted)
+                _ = task.Exception;
+            else
             {
-                if (task.IsFaulted)
+                task.ContinueWith(t =>
                 {
-                    var _ = task.Exception;
-                }
-
-                return;
+                    t.Exception?.Handle(_ => true);
+                }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
             }
+        }
 
-            task.ContinueWith(t =>
+        public static void TrySetFromTask<T>(this TaskCompletionSource<T> source, Task task, T value)
+        {
+            switch (task)
             {
-                var _ = t.Exception;
-            }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+                case { IsCanceled: true }:
+                    source.TrySetCanceled();
+                    break;
+                case { IsFaulted: true, Exception.InnerExceptions: not null }:
+                    source.TrySetException(task.Exception.InnerExceptions);
+                    break;
+                case { IsFaulted: true, Exception: not null }:
+                    source.TrySetException(task.Exception);
+                    break;
+                case { IsFaulted: true, Exception: null }:
+                    source.TrySetException(new InvalidOperationException("The context faulted but no exception was present."));
+                    break;
+                default:
+                    source.TrySetResult(value);
+                    break;
+            }
+        }
+
+        public static void TrySetFromTask<T>(this TaskCompletionSource<T> source, Task<T> task)
+        {
+            switch (task)
+            {
+                case { IsCanceled: true }:
+                    source.TrySetCanceled();
+                    break;
+                case { IsFaulted: true, Exception.InnerExceptions: not null }:
+                    source.TrySetException(task.Exception.InnerExceptions);
+                    break;
+                case { IsFaulted: true, Exception: not null }:
+                    source.TrySetException(task.Exception);
+                    break;
+                case { IsFaulted: true, Exception: null }:
+                    source.TrySetException(new InvalidOperationException("The context faulted but no exception was present."));
+                    break;
+                default:
+                    source.TrySetResult(task.Result);
+                    break;
+            }
         }
 
         /// <summary>
@@ -217,24 +268,10 @@ namespace MassTransit.Internals
             return cancellationToken.Register(SetCompleted, source);
         }
 
-        static void SetCompleted(object obj)
+        static void SetCompleted(object? obj)
         {
             if (obj is TaskCompletionSource<bool> source)
                 source.TrySetResult(true);
-        }
-
-        static CancellationTokenRegistration RegisterIfCanBeCanceled(CancellationToken cancellationToken, CancellationTokenSource source)
-        {
-            if (cancellationToken.CanBeCanceled)
-                return cancellationToken.Register(Cancel, source);
-
-            return default;
-        }
-
-        static void Cancel(object obj)
-        {
-            if (obj is CancellationTokenSource source)
-                source.Cancel();
         }
     }
 }

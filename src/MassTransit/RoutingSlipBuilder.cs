@@ -2,13 +2,13 @@
 {
     using System;
     using System.Collections.Generic;
-    using System.Text.Json;
     using System.Threading.Tasks;
     using Courier;
     using Courier.Contracts;
     using Courier.Messages;
     using Events;
     using Serialization;
+    using Util;
 
 
     /// <summary>
@@ -21,13 +21,13 @@
     {
         public static readonly IDictionary<string, object> NoArguments = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
-        readonly IList<ActivityException> _activityExceptions;
-        readonly IList<ActivityLog> _activityLogs;
-        readonly IList<CompensateLog> _compensateLogs;
+        readonly List<ActivityException> _activityExceptions;
+        readonly List<ActivityLog> _activityLogs;
+        readonly List<CompensateLog> _compensateLogs;
         readonly DateTime _createTimestamp;
-        readonly IList<Activity> _itinerary;
+        readonly List<Activity> _itinerary;
         readonly List<Activity> _sourceItinerary;
-        readonly IList<Subscription> _subscriptions;
+        readonly List<Subscription> _subscriptions;
         readonly IDictionary<string, object> _variables;
 
         public RoutingSlipBuilder(Guid trackingNumber)
@@ -159,7 +159,7 @@
             if (key == null)
                 throw new ArgumentNullException(nameof(key));
 
-            if (string.IsNullOrEmpty(value))
+            if (value == null)
                 _variables.Remove(key);
             else
                 _variables[key] = value;
@@ -175,7 +175,7 @@
             if (key == null)
                 throw new ArgumentNullException(nameof(key));
 
-            if (value == null || value is string s && string.IsNullOrEmpty(s))
+            if (value == null)
                 _variables.Remove(key);
             else
                 _variables[key] = value;
@@ -290,6 +290,16 @@
         }
 
         /// <summary>
+        /// Builds the routing slip using the current state of the builder
+        /// </summary>
+        /// <returns>The RoutingSlip</returns>
+        public RoutingSlip Build()
+        {
+            return new RoutingSlipRoutingSlip(TrackingNumber, _createTimestamp, _itinerary, _activityLogs, _compensateLogs, _activityExceptions,
+                _variables, _subscriptions);
+        }
+
+        /// <summary>
         /// Adds a custom subscription message to the routing slip which is sent at the specified events
         /// </summary>
         /// <param name="address">The destination address where the events are sent</param>
@@ -303,26 +313,9 @@
             _subscriptions.Add(new RoutingSlipSubscription(address, events, contents, activityName, message));
         }
 
-        /// <summary>
-        /// Builds the routing slip using the current state of the builder
-        /// </summary>
-        /// <returns>The RoutingSlip</returns>
-        public RoutingSlip Build()
-        {
-            return new RoutingSlipRoutingSlip(TrackingNumber, _createTimestamp, _itinerary, _activityLogs, _compensateLogs, _activityExceptions,
-                _variables, _subscriptions);
-        }
-
         public void AddActivityLog(HostInfo host, string name, Guid activityTrackingNumber, DateTime timestamp, TimeSpan duration)
         {
             _activityLogs.Add(new RoutingSlipActivityLog(host, activityTrackingNumber, name, timestamp, duration));
-        }
-
-        public void AddCompensateLog(Guid activityTrackingNumber, Uri compensateAddress, object logObject)
-        {
-            IDictionary<string, object> data = GetObjectAsDictionary(logObject);
-
-            _compensateLogs.Add(new RoutingSlipCompensateLog(activityTrackingNumber, compensateAddress, data));
         }
 
         public void AddCompensateLog(Guid activityTrackingNumber, Uri compensateAddress, IDictionary<string, object> data)
@@ -387,7 +380,7 @@
         {
             foreach (KeyValuePair<string, object> value in values)
             {
-                if (value.Value == null || value.Value is string s && string.IsNullOrEmpty(s))
+                if (value.Value == null)
                     _variables.Remove(value.Key);
                 else
                     _variables[value.Key] = value.Value;
@@ -396,12 +389,7 @@
 
         public static IDictionary<string, object> GetObjectAsDictionary(object values)
         {
-            if (values == null)
-                return new Dictionary<string, object>();
-
-            var jsonElement = JsonSerializer.SerializeToElement(values, SystemTextJsonMessageSerializer.Options);
-
-            return jsonElement.Deserialize<IDictionary<string, object>>();
+            return ConvertObject.ToDictionary(values);
         }
     }
 }

@@ -4,6 +4,7 @@ namespace MassTransit.ActiveMqTransport
     using System.Threading.Tasks;
     using Apache.NMS;
     using MassTransit.Middleware;
+    using Topology;
 
 
     public class ScopeSessionContext :
@@ -21,42 +22,63 @@ namespace MassTransit.ActiveMqTransport
 
         public override CancellationToken CancellationToken { get; }
 
-        ISession SessionContext.Session => _context.Session;
-        ConnectionContext SessionContext.ConnectionContext => _context.ConnectionContext;
+        public ISession Session => _context.Session;
+        public ConnectionContext ConnectionContext => _context.ConnectionContext;
 
-        Task<ITopic> SessionContext.GetTopic(string topicName)
+        public Task<ITopic> GetTopic(Topic topic)
         {
-            return _context.GetTopic(topicName);
+            return _context.GetTopic(topic);
         }
 
-        Task<IQueue> SessionContext.GetQueue(string queueName)
+        public Task<IQueue> GetQueue(Queue queue)
         {
-            return _context.GetQueue(queueName);
+            return _context.GetQueue(queue);
         }
 
-        Task<IDestination> SessionContext.GetDestination(string destination, DestinationType destinationType)
+        public Task<IDestination> GetDestination(string destinationName, DestinationType destinationType)
         {
-            return _context.GetDestination(destination, destinationType);
+            return _context.GetDestination(destinationName, destinationType);
         }
 
-        Task<IMessageProducer> SessionContext.CreateMessageProducer(IDestination destination)
+        public Task<IMessageConsumer> CreateMessageConsumer(IDestination destination, string selector, bool noLocal, string consumerName = null,
+            bool shared = false)
         {
-            return _context.CreateMessageProducer(destination);
+            return _context.CreateMessageConsumer(destination, selector, noLocal, consumerName, shared);
         }
 
-        Task<IMessageConsumer> SessionContext.CreateMessageConsumer(IDestination destination, string selector, bool noLocal)
+        public Task SendAsync(IDestination destination, IMessage message, CancellationToken cancellationToken)
         {
-            return _context.CreateMessageConsumer(destination, selector, noLocal);
+            return _context.SendAsync(destination, message, cancellationToken);
         }
 
-        Task SessionContext.DeleteTopic(string topicName)
+        public IBytesMessage CreateBytesMessage(byte[] content)
+        {
+            return _context.CreateBytesMessage(content);
+        }
+
+        public Task DeleteTopic(string topicName)
         {
             return _context.DeleteTopic(topicName);
         }
 
-        Task SessionContext.DeleteQueue(string queueName)
+        public Task DeleteQueue(string queueName)
         {
             return _context.DeleteQueue(queueName);
+        }
+
+        public IDestination GetTemporaryDestination(string name)
+        {
+            return _context.GetTemporaryDestination(name);
+        }
+
+        public ITextMessage CreateTextMessage(string content)
+        {
+            return _context.CreateTextMessage(content);
+        }
+
+        public IMessage CreateMessage()
+        {
+            return _context.CreateMessage();
         }
     }
 }

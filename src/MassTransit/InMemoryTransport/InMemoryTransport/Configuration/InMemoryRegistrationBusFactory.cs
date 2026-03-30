@@ -13,7 +13,7 @@ namespace MassTransit.InMemoryTransport.Configuration
         readonly Action<IBusRegistrationContext, IInMemoryBusFactoryConfigurator> _configure;
 
         public InMemoryRegistrationBusFactory(Uri baseAddress, Action<IBusRegistrationContext, IInMemoryBusFactoryConfigurator> configure)
-            : this(new InMemoryBusConfiguration(new InMemoryTopologyConfiguration(InMemoryBus.MessageTopology), baseAddress), configure)
+            : this(new InMemoryBusConfiguration(new InMemoryTopologyConfiguration(InMemoryBus.CreateMessageTopology()), baseAddress), configure)
         {
         }
 
@@ -31,6 +31,12 @@ namespace MassTransit.InMemoryTransport.Configuration
             var configurator = new InMemoryBusFactoryConfigurator(_busConfiguration);
 
             return CreateBus(configurator, context, _configure, specifications);
+        }
+
+        protected override IBusInstance CreateBusInstance(IBusControl bus, IHost<IInMemoryReceiveEndpointConfigurator> host,
+            IHostConfiguration hostConfiguration, IBusRegistrationContext context)
+        {
+            return new InMemoryBusInstance(bus, host, hostConfiguration, context);
         }
     }
 }

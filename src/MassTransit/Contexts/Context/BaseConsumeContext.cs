@@ -1,12 +1,11 @@
+#nullable enable
 namespace MassTransit.Context
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
+    using System.Diagnostics.CodeAnalysis;
     using System.Threading;
     using System.Threading.Tasks;
-    using Events;
-    using Metadata;
     using Transports;
 
 
@@ -14,14 +13,8 @@ namespace MassTransit.Context
         PublishEndpoint,
         ConsumeContext
     {
-        protected BaseConsumeContext(ReceiveContext receiveContext)
-            : base(receiveContext?.PublishEndpointProvider)
-        {
-            ReceiveContext = receiveContext;
-        }
-
         protected BaseConsumeContext(ReceiveContext receiveContext, SerializerContext serializerContext)
-            : base(receiveContext?.PublishEndpointProvider)
+            : base(receiveContext.PublishEndpointProvider)
         {
             ReceiveContext = receiveContext;
             SerializerContext = serializerContext;
@@ -31,7 +24,7 @@ namespace MassTransit.Context
 
         public abstract bool HasPayloadType(Type payloadType);
 
-        public abstract bool TryGetPayload<T>(out T payload)
+        public abstract bool TryGetPayload<T>([NotNullWhen(true)] out T? payload)
             where T : class;
 
         public abstract T GetOrAddPayload<T>(PayloadFactory<T> payloadFactory)
@@ -62,7 +55,7 @@ namespace MassTransit.Context
         public abstract IEnumerable<string> SupportedMessageTypes { get; }
         public abstract bool HasMessageType(Type messageType);
 
-        public abstract bool TryGetMessage<T>(out ConsumeContext<T> consumeContext)
+        public abstract bool TryGetMessage<T>([NotNullWhen(true)] out ConsumeContext<T>? consumeContext)
             where T : class;
 
         public virtual Task RespondAsync<T>(T message)
@@ -171,7 +164,7 @@ namespace MassTransit.Context
         {
             var sendEndpoint = await ReceiveContext.SendEndpointProvider.GetSendEndpoint(address).ConfigureAwait(false);
 
-            return new ConsumeSendEndpoint(sendEndpoint, this, RequestId);
+            return new ConsumeSendEndpoint(sendEndpoint, this);
         }
 
         public virtual Task NotifyConsumed<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType)
@@ -183,7 +176,16 @@ namespace MassTransit.Context
         public virtual async Task NotifyFaulted<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType, Exception exception)
             where T : class
         {
-            await GenerateFault(context, exception).ConfigureAwait(false);
+            switch (exception)
+            {
+                case OperationCanceledException canceled when canceled.CancellationToken == context.CancellationToken:
+                    break;
+
+                default:
+                    if (!context.CancellationToken.IsCancellationRequested)
+                        await GenerateFault(context, exception).ConfigureAwait(false);
+                    break;
+            }
 
             await ReceiveContext.NotifyFaulted(context, duration, consumerType, exception).ConfigureAwait(false);
         }
@@ -195,7 +197,7 @@ namespace MassTransit.Context
 
         public abstract void AddConsumeTask(Task task);
 
-        Task RespondInternal<T>(T message, IPipe<SendContext<T>> pipe = null)
+        Task RespondInternal<T>(T message, IPipe<SendContext<T>>? pipe = null)
             where T : class
         {
             Task<ISendEndpoint> sendEndpointTask = this.GetResponseEndpoint<T>();
@@ -204,7 +206,7 @@ namespace MassTransit.Context
                 var sendEndpoint = sendEndpointTask.Result;
 
                 return pipe.IsNotEmpty()
-                    ? sendEndpoint.Send(message, pipe, CancellationToken)
+                    ? sendEndpoint.Send(message, pipe!, CancellationToken)
                     : sendEndpoint.Send(message, CancellationToken);
             }
 
@@ -213,7 +215,7 @@ namespace MassTransit.Context
                 var sendEndpoint = await sendEndpointTask.ConfigureAwait(false);
 
                 if (pipe.IsNotEmpty())
-                    await sendEndpoint.Send(message, pipe, CancellationToken).ConfigureAwait(false);
+                    await sendEndpoint.Send(message, pipe!, CancellationToken).ConfigureAwait(false);
                 else
                     await sendEndpoint.Send(message, CancellationToken).ConfigureAwait(false);
             }
@@ -221,7 +223,7 @@ namespace MassTransit.Context
             return RespondInternalAsync();
         }
 
-        Task RespondInternal<T>(object values, IPipe<SendContext<T>> pipe = null)
+        Task RespondInternal<T>(object values, IPipe<SendContext<T>>? pipe = null)
             where T : class
         {
             Task<ISendEndpoint> sendEndpointTask = this.GetResponseEndpoint<T>();
@@ -230,7 +232,7 @@ namespace MassTransit.Context
                 var sendEndpoint = sendEndpointTask.Result;
 
                 return pipe.IsNotEmpty()
-                    ? sendEndpoint.Send(values, pipe, CancellationToken)
+                    ? sendEndpoint.Send(values, pipe!, CancellationToken)
                     : sendEndpoint.Send<T>(values, CancellationToken);
             }
 
@@ -239,7 +241,7 @@ namespace MassTransit.Context
                 var sendEndpoint = await sendEndpointTask.ConfigureAwait(false);
 
                 if (pipe.IsNotEmpty())
-                    await sendEndpoint.Send(values, pipe, CancellationToken).ConfigureAwait(false);
+                    await sendEndpoint.Send(values, pipe!, CancellationToken).ConfigureAwait(false);
                 else
                     await sendEndpoint.Send<T>(values, CancellationToken).ConfigureAwait(false);
             }
@@ -247,22 +249,10 @@ namespace MassTransit.Context
             return RespondInternalAsync();
         }
 
-        protected virtual async Task GenerateFault<T>(ConsumeContext<T> context, Exception exception)
+        protected virtual Task GenerateFault<T>(ConsumeContext<T> context, Exception exception)
             where T : class
         {
-            if (context.ReceiveContext.PublishFaults || context.FaultAddress != null || context.ResponseAddress != null)
-            {
-                Fault<T> fault = new FaultEvent<T>(context.Message, context.MessageId, HostMetadataCache.Host, exception,
-                    context.SupportedMessageTypes.ToArray());
-
-                var faultPipe = new FaultPipe<T>(context);
-
-                var faultContext = context.SkipOutbox();
-
-                var faultEndpoint = await faultContext.GetFaultEndpoint<T>().ConfigureAwait(false);
-
-                await faultEndpoint.Send(fault, faultPipe, CancellationToken).ConfigureAwait(false);
-            }
+            return context.GenerateFault(exception);
         }
 
         Task ConsumeTask(Task task)
@@ -276,43 +266,7 @@ namespace MassTransit.Context
         {
             var publishSendEndpoint = await base.GetPublishSendEndpoint<T>().ConfigureAwait(false);
 
-            return new ConsumeSendEndpoint(publishSendEndpoint, this, RequestId);
-        }
-
-
-        class FaultPipe<T> :
-            IPipe<SendContext<Fault<T>>>
-            where T : class
-        {
-            readonly ConsumeContext<T> _context;
-
-            public FaultPipe(ConsumeContext<T> context)
-            {
-                _context = context;
-            }
-
-            public Task Send(SendContext<Fault<T>> context)
-            {
-                context.TransferConsumeContextHeaders(_context);
-
-                context.CorrelationId = _context.CorrelationId;
-                context.RequestId = _context.RequestId;
-
-                if (_context.TryGetPayload(out ConsumeRetryContext consumeRetryContext) && consumeRetryContext.RetryCount > 0)
-                    context.Headers.Set(MessageHeaders.FaultRetryCount, consumeRetryContext.RetryCount);
-                else if (_context.TryGetPayload(out RetryContext retryContext) && retryContext.RetryCount > 0)
-                    context.Headers.Set(MessageHeaders.FaultRetryCount, retryContext.RetryCount);
-
-                var redeliveryCount = _context.Headers.Get<int>(MessageHeaders.RedeliveryCount);
-                if (redeliveryCount.HasValue)
-                    context.Headers.Set(MessageHeaders.FaultRedeliveryCount, redeliveryCount);
-
-                return Task.CompletedTask;
-            }
-
-            public void Probe(ProbeContext context)
-            {
-            }
+            return new ConsumeSendEndpoint(publishSendEndpoint, this);
         }
     }
 }

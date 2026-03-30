@@ -1,7 +1,6 @@
 ﻿namespace MassTransit.ActiveMqTransport
 {
     using System;
-    using System.Threading;
     using System.Threading.Tasks;
     using Apache.NMS;
     using Configuration;
@@ -38,7 +37,8 @@
 
             var settings = _topologyConfiguration.Send.GetSendSettings(endpointAddress);
 
-            IPipe<SessionContext> configureTopology = new ConfigureActiveMqTopologyFilter<SendSettings>(settings, settings.GetBrokerTopology()).ToPipe();
+            IPipe<SessionContext> configureTopology = new ConfigureActiveMqTopologyFilter<SendSettings>(settings, settings.GetBrokerTopology(), context)
+                .ToPipe();
 
             return CreateSendTransport(context, sessionContextSupervisor, configureTopology, settings.EntityName,
                 endpointAddress.Type == ActiveMqEndpointAddress.AddressType.Queue ? DestinationType.Queue : DestinationType.Topic);
@@ -53,57 +53,24 @@
 
             var settings = publishTopology.GetSendSettings(_hostConfiguration.HostAddress);
 
-            IPipe<SessionContext> configureTopology = new ConfigureActiveMqTopologyFilter<SendSettings>(settings, publishTopology.GetBrokerTopology()).ToPipe();
+            IPipe<SessionContext> configureTopology = new ConfigureActiveMqTopologyFilter<SendSettings>(settings, publishTopology.GetBrokerTopology(), context)
+                .ToPipe();
 
             return CreateSendTransport(context, sessionContextSupervisor, configureTopology, settings.EntityName, DestinationType.Topic);
         }
 
-        Task<ISendTransport> CreateSendTransport(ActiveMqReceiveEndpointContext context, ISessionContextSupervisor sessionContextSupervisor,
+        Task<ISendTransport> CreateSendTransport(ReceiveEndpointContext context, ISessionContextSupervisor sessionContextSupervisor,
             IPipe<SessionContext> pipe, string entityName, DestinationType destinationType)
         {
             var supervisor = new SessionContextSupervisor(sessionContextSupervisor);
 
-            var sendTransportContext = new SendTransportContext(_hostConfiguration, context, supervisor, pipe, entityName, destinationType);
+            var sendTransportContext = new ActiveMqSendTransportContext(_hostConfiguration, context, supervisor, pipe, entityName, destinationType);
 
-            var transport = new ActiveMqSendTransport(sendTransportContext);
+            var transport = new SendTransport<SessionContext>(sendTransportContext);
 
             sessionContextSupervisor.AddSendAgent(transport);
 
             return Task.FromResult<ISendTransport>(transport);
-        }
-
-
-        class SendTransportContext :
-            BaseSendTransportContext,
-            ActiveMqSendTransportContext
-        {
-            readonly IActiveMqHostConfiguration _hostConfiguration;
-
-            public SendTransportContext(IActiveMqHostConfiguration hostConfiguration, ReceiveEndpointContext receiveEndpointContext,
-                ISessionContextSupervisor sessionContextSupervisor, IPipe<SessionContext> configureTopologyPipe, string entityName,
-                DestinationType destinationType)
-                : base(hostConfiguration, receiveEndpointContext.Serialization)
-            {
-                _hostConfiguration = hostConfiguration;
-                SessionContextSupervisor = sessionContextSupervisor;
-                ConfigureTopologyPipe = configureTopologyPipe;
-                EntityName = entityName;
-                DestinationType = destinationType;
-            }
-
-            public IPipe<SessionContext> ConfigureTopologyPipe { get; }
-            public override string EntityName { get; }
-            public DestinationType DestinationType { get; }
-            public ISessionContextSupervisor SessionContextSupervisor { get; }
-
-            public Task Send(IPipe<SessionContext> pipe, CancellationToken cancellationToken)
-            {
-                return _hostConfiguration.Retry(() => SessionContextSupervisor.Send(pipe, cancellationToken), SessionContextSupervisor, cancellationToken);
-            }
-
-            public void Probe(ProbeContext context)
-            {
-            }
         }
     }
 }

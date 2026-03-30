@@ -2,24 +2,27 @@ namespace MassTransit.Configuration
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
+    using Microsoft.Extensions.DependencyInjection;
 
 
     public class RiderRegistrationContext :
+        ISetScopedConsumeContext,
         IRiderRegistrationContext
     {
-        readonly IRegistrationContext _registration;
-        readonly IRegistrationCache<object> _registrations;
+        readonly RegistrationContext _registration;
 
-        public RiderRegistrationContext(IRegistrationContext registration, IRegistrationCache<object> registrations)
+        readonly IContainerSelector _selector;
+
+        public RiderRegistrationContext(RegistrationContext registration, IContainerSelector selector)
         {
             _registration = registration;
-            _registrations = registrations;
+            _selector = selector;
         }
 
         public IEnumerable<T> GetRegistrations<T>()
+            where T : class, IRegistration
         {
-            return _registrations.Values.OfType<T>();
+            return _selector.GetRegistrations<T>(_registration);
         }
 
         public object GetService(Type serviceType)
@@ -89,6 +92,11 @@ namespace MassTransit.Configuration
             where T : class, ISaga
         {
             _registration.ConfigureFuture<T>(configurator);
+        }
+
+        public IDisposable PushContext(IServiceScope scope, ConsumeContext context)
+        {
+            return _registration.PushContext(scope, context);
         }
     }
 }

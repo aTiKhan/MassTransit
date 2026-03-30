@@ -2,7 +2,7 @@ namespace MassTransit.DependencyInjection.Registration
 {
     using System;
     using Configuration;
-    using Futures;
+    using Internals;
     using Microsoft.Extensions.DependencyInjection;
     using Transports;
 
@@ -11,23 +11,32 @@ namespace MassTransit.DependencyInjection.Registration
         IFutureRegistration
         where TFuture : class, SagaStateMachine<FutureState>
     {
+        readonly IContainerSelector _selector;
         IFutureDefinition<TFuture> _definition;
+
+        public FutureRegistration(IContainerSelector selector)
+        {
+            _selector = selector;
+            IncludeInConfigureEndpoints = !Type.HasAttribute<ExcludeFromConfigureEndpointsAttribute>();
+        }
 
         public Type Type => typeof(TFuture);
 
-        public void Configure(IReceiveEndpointConfigurator configurator, IServiceProvider provider)
-        {
-            var stateMachine = provider.GetRequiredService<TFuture>();
-            var repository = provider.GetRequiredService<ISagaRepository<FutureState>>();
+        public bool IncludeInConfigureEndpoints { get; set; }
 
-            var decoratorRegistration = provider.GetService<ISagaRepositoryDecoratorRegistration<FutureState>>();
+        public void Configure(IReceiveEndpointConfigurator configurator, IRegistrationContext context)
+        {
+            var stateMachine = context.GetRequiredService<TFuture>();
+            ISagaRepository<FutureState> repository = new DependencyInjectionSagaRepository<FutureState>(context);
+
+            var decoratorRegistration = context.GetService<ISagaRepositoryDecoratorRegistration<FutureState>>();
             if (decoratorRegistration != null)
                 repository = decoratorRegistration.DecorateSagaRepository(repository);
 
-            var sagaConfigurator = new StateMachineSagaConfigurator<FutureState>(stateMachine, repository, configurator);
+            var sagaConfigurator = new MassTransitStateMachine<FutureState>.StateMachineSagaConfigurator(stateMachine, repository, configurator);
 
-            GetFutureDefinition(provider)
-                .Configure(configurator, sagaConfigurator);
+            GetFutureDefinition(context)
+                .Configure(configurator, sagaConfigurator, context);
 
             LogContext.Info?.Log("Configured endpoint {Endpoint}, Future: {FutureType}",
                 configurator.InputAddress.GetEndpointName(), TypeCache<TFuture>.ShortName);
@@ -35,9 +44,9 @@ namespace MassTransit.DependencyInjection.Registration
             configurator.AddEndpointSpecification(sagaConfigurator);
         }
 
-        public IFutureDefinition GetDefinition(IServiceProvider provider)
+        public IFutureDefinition GetDefinition(IRegistrationContext context)
         {
-            return GetFutureDefinition(provider);
+            return GetFutureDefinition(context);
         }
 
         IFutureDefinition<TFuture> GetFutureDefinition(IServiceProvider provider)
@@ -45,9 +54,9 @@ namespace MassTransit.DependencyInjection.Registration
             if (_definition != null)
                 return _definition;
 
-            _definition = provider.GetService<IFutureDefinition<TFuture>>() ?? new DefaultFutureDefinition<TFuture>();
+            _definition = _selector.GetDefinition<IFutureDefinition<TFuture>>(provider) ?? new DefaultFutureDefinition<TFuture>();
 
-            var endpointDefinition = provider.GetService<IEndpointDefinition<TFuture>>();
+            IEndpointDefinition<TFuture> endpointDefinition = _selector.GetEndpointDefinition<TFuture>(provider);
             if (endpointDefinition != null)
                 _definition.EndpointDefinition = endpointDefinition;
 

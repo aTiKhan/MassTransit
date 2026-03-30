@@ -4,13 +4,18 @@ namespace MassTransit.ActiveMqTransport.Tests
     using NUnit.Framework;
     using Serialization;
     using TestMessages;
-    using Transports;
 
 
-    [TestFixture]
+    [TestFixture(ActiveMqHostAddress.ActiveMqScheme)]
+    [TestFixture(ActiveMqHostAddress.AmqpScheme)]
     public class When_the_serialized_message_is_invalid :
         ActiveMqTestFixture
     {
+        public When_the_serialized_message_is_invalid(string protocol)
+            : base(protocol)
+        {
+        }
+
         [Test]
         public async Task Should_fault()
         {

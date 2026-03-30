@@ -11,49 +11,62 @@
     [TestFixture]
     public class Using_the_newid_formatters
     {
+        // Base32
         [Test]
-        public void Should_compare_known_conversions()
+        public void Should_compare_known_conversions_Base32Lower() => CompareKnownEncoding("Base32Lower", new Base32Formatter());
+
+        [Test]
+        public void Should_compare_known_conversions_Base32Upper() => CompareKnownEncoding("Base32Upper", new Base32Formatter(true));
+
+        [Test]
+        public void Should_compare_known_conversions_CustomBase32()
         {
-            var directory = AppDomain.CurrentDomain.BaseDirectory;
-            var newIdFileName = Path.Combine(directory, "NewId", "guids.txt");
-            var textsFileName = Path.Combine(directory, "NewId", "texts.txt");
+            CompareKnownEncoding("CustomBase32", new Base32Formatter("0123456789ABCDEFGHIJKLMNOPQRSTUV"));
+        }
 
-            var newIds = new List<NewId>();
+        [Test]
+        public void Should_compare_known_conversions_DashedHexBase16BracketsLower()
+        {
+            CompareKnownEncoding("DashedHexBase16BracketsLower", new DashedHexFormatter('{', '}'));
+        }
 
-            using (var file = File.Open(newIdFileName, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var reader = new StreamReader(file))
-            {
-                while (!reader.EndOfStream)
-                {
-                    var line = reader.ReadLine();
-                    newIds.Add(new NewId(line.Trim()));
-                }
-            }
+        [Test]
+        public void Should_compare_known_conversions_DashedHexBase16BracketsUpper()
+        {
+            CompareKnownEncoding("DashedHexBase16BracketsUpper", new DashedHexFormatter('{', '}', true));
+        }
 
-            var texts = new List<string>(newIds.Count);
+        // DashedHex
+        [Test]
+        public void Should_compare_known_conversions_DashedHexBase16Lower()
+        {
+            CompareKnownEncoding("DashedHexBase16Lower", new DashedHexFormatter());
+        }
 
-            using (var file = File.Open(textsFileName, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var reader = new StreamReader(file))
-            {
-                while (!reader.EndOfStream)
-                {
-                    var line = reader.ReadLine();
-                    texts.Add(line.Trim());
-                }
-            }
+        [Test]
+        public void Should_compare_known_conversions_DashedHexBase16Upper()
+        {
+            CompareKnownEncoding("DashedHexBase16Upper", new DashedHexFormatter(upperCase: true));
+        }
 
-            Assert.AreEqual(newIds.Count, texts.Count);
+        // Hex
+        [Test]
+        public void Should_compare_known_conversions_HexBase16Lower() => CompareKnownEncoding("HexBase16Lower", new HexFormatter());
 
-            var formatter = new Base32Formatter("0123456789ABCDEFGHIJKLMNOPQRSTUV");
+        [Test]
+        public void Should_compare_known_conversions_HexBase16Upper() => CompareKnownEncoding("HexBase16Upper", new HexFormatter(true));
 
-            for (var i = 0; i < newIds.Count; i++)
-            {
-                var text = newIds[i].ToString(formatter);
+        // ZBase32
+        [Test]
+        public void Should_compare_known_conversions_ZBase32Lower()
+        {
+            CompareKnownEncoding("ZBase32Lower", new ZBase32Formatter());
+        }
 
-                Assert.AreEqual(texts[i], text);
-            }
-
-            Console.WriteLine("Compared {0} equal conversions", texts.Count);
+        [Test]
+        public void Should_compare_known_conversions_ZBase32Upper()
+        {
+            CompareKnownEncoding("ZBase32Upper", new ZBase32Formatter(true));
         }
 
         [Test]
@@ -69,7 +82,7 @@
             var newId = parser.Parse(ns);
 
 
-            Assert.AreEqual(n, newId);
+            Assert.That(newId, Is.EqualTo(n));
         }
 
         [Test]
@@ -85,7 +98,7 @@
             var newId = parser.Parse(ns);
 
 
-            Assert.AreEqual(n, newId);
+            Assert.That(newId, Is.EqualTo(n));
         }
 
         [Test]
@@ -97,7 +110,7 @@
 
             var ns = n.ToString(formatter);
 
-            Assert.AreEqual("UQP7OV4AN129HB4N79GGF8GJ10", ns);
+            Assert.That(ns, Is.EqualTo("UQP7OV4AN129HB4N79GGF8GJ10"));
         }
 
         [Test]
@@ -109,7 +122,7 @@
 
             var ns = n.ToString(formatter);
 
-            Assert.AreEqual("62ZHY7EKXBCJRLEXHJQQPIQTBA", ns);
+            Assert.That(ns, Is.EqualTo("62ZHY7EKXBCJRLEXHJQQPIQTBA"));
         }
 
         [Test]
@@ -121,7 +134,7 @@
 
             var ns = n.ToString(formatter);
 
-            Assert.AreEqual("6438A9RKZBNJTMRZ8JOOXEOUBY", ns);
+            Assert.That(ns, Is.EqualTo("6438A9RKZBNJTMRZ8JOOXEOUBY"));
         }
 
         [Test]
@@ -135,7 +148,34 @@
             var newId = parser.Parse(ns);
 
 
-            Assert.AreEqual(n, newId);
+            Assert.That(newId, Is.EqualTo(n));
+        }
+
+        readonly Dictionary<string, string[]> _testValues;
+
+        public Using_the_newid_formatters()
+        {
+            var directory = AppDomain.CurrentDomain.BaseDirectory;
+            var textsFileName = Path.Combine(directory, "NewId", "texts.txt");
+            var fileText = File.ReadAllText(textsFileName);
+
+            _testValues = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string[]>>(fileText);
+        }
+
+        public void CompareKnownEncoding(string name, INewIdFormatter formatter)
+        {
+            var guids = _testValues["Guids"];
+            var expectedValues = _testValues[name];
+            Assert.That(expectedValues, Has.Length.EqualTo(guids.Length));
+
+            for (var i = 0; i < guids.Length; i++)
+            {
+                var newId = new NewId(guids[i]);
+                var text = newId.ToString(formatter);
+                Assert.That(text, Is.EqualTo(expectedValues[i]));
+            }
+
+            Console.WriteLine("Compared {0} equal conversions", guids.Length);
         }
     }
 }

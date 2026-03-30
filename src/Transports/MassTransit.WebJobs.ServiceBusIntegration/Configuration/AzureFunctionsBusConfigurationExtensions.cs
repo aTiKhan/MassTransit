@@ -3,18 +3,19 @@ namespace MassTransit
     using System;
     using Azure.Identity;
     using Azure.Messaging.ServiceBus;
+    using AzureServiceBusTransport;
     using Microsoft.ApplicationInsights.DependencyCollector;
+    using Microsoft.Azure.WebJobs.ServiceBus;
     using Microsoft.Extensions.Configuration;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Options;
-    using ServiceBusIntegration;
 
 
     public static class AzureFunctionsBusConfigurationExtensions
     {
         /// <summary>
         /// Add the Azure Function support for MassTransit, which uses Azure Service Bus, and configures
-        /// <see cref="IMessageReceiver" /> for use by functions to handle messages.
+        /// <see cref="MassTransit.IMessageReceiver" /> for use by functions to handle messages.
         /// </summary>
         /// <param name="services"></param>
         /// <param name="configure">
@@ -41,7 +42,7 @@ namespace MassTransit
 
                     x.UsingAzureServiceBus((context, cfg) =>
                     {
-                        var options = context.GetRequiredService<IOptions<Microsoft.Azure.WebJobs.ServiceBus.ServiceBusOptions>>();
+                        var options = context.GetRequiredService<IOptions<ServiceBusOptions>>();
 
                         options.Value.AutoCompleteMessages = true;
 
@@ -49,12 +50,22 @@ namespace MassTransit
                         var connectionString = config[connectionStringConfigurationKey];
 
                         if (string.IsNullOrWhiteSpace(connectionString))
-                            throw new ArgumentNullException(connectionStringConfigurationKey, "A connection string must be used for Azure Functions.");
+                        {
+                            var ns = config["ServiceBusConnection:fullyQualifiedNamespace"]
+                                ?? config[$"{connectionStringConfigurationKey}:fullyQualifiedNamespace"];
+                            if (string.IsNullOrWhiteSpace(ns))
+                            {
+                                throw new ArgumentNullException(connectionStringConfigurationKey,
+                                    "The service bus connection string or namespace was not configured");
+                            }
+
+                            connectionString = $"Endpoint=sb://{ns}";
+                        }
 
                         cfg.Host(connectionString, h =>
                         {
                             if (IsMissingCredentials(connectionString))
-                                h.TokenCredential = new ManagedIdentityCredential();
+                                h.TokenCredential = new DefaultAzureCredential();
                         });
 
                         cfg.UseServiceBusMessageScheduler();
@@ -63,11 +74,15 @@ namespace MassTransit
                     });
                 });
 
+            services.RemoveMassTransitHostedService();
+
             return services;
         }
 
         static bool IsMissingCredentials(string connectionString)
         {
+            if (!connectionString.Contains("=")) return true;
+
             var properties = ServiceBusConnectionStringProperties.Parse(connectionString);
 
             return (string.IsNullOrWhiteSpace(properties.SharedAccessKeyName) || string.IsNullOrWhiteSpace(properties.SharedAccessKey))

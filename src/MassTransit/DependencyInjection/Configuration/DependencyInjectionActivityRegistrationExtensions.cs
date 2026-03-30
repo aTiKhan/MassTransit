@@ -1,8 +1,6 @@
 namespace MassTransit.Configuration
 {
     using System;
-    using Courier;
-    using DependencyInjection;
     using DependencyInjection.Registration;
     using Internals;
     using Microsoft.Extensions.DependencyInjection;
@@ -24,7 +22,7 @@ namespace MassTransit.Configuration
             where TArguments : class
             where TLog : class
         {
-            return new Activity<TActivity, TArguments, TLog>().Register(collection, registrar);
+            return new ActivityRegistrar<TActivity, TArguments, TLog>().Register(collection, registrar);
         }
 
         public static IActivityRegistration RegisterActivity<TActivity, TArguments, TLog, TDefinition>(this IServiceCollection collection)
@@ -43,7 +41,7 @@ namespace MassTransit.Configuration
             where TLog : class
             where TDefinition : class, IActivityDefinition<TActivity, TArguments, TLog>
         {
-            return new ActivityDefinition<TActivity, TArguments, TLog, TDefinition>().Register(collection, registrar);
+            return new ActivityDefinitionRegistrar<TActivity, TArguments, TLog, TDefinition>().Register(collection, registrar);
         }
 
         public static IActivityRegistration RegisterActivity<TActivity, TArguments, TLog>(this IServiceCollection collection, Type activityDefinitionType)
@@ -70,21 +68,52 @@ namespace MassTransit.Configuration
                     nameof(activityDefinitionType));
             }
 
-            var register = (IRegister)Activator.CreateInstance(typeof(ActivityDefinition<,,>)
+            var register = (IActivityRegistrar)Activator.CreateInstance(typeof(ActivityDefinitionRegistrar<,,,>)
                 .MakeGenericType(typeof(TActivity), typeof(TArguments), typeof(TLog), activityDefinitionType));
 
             return register.Register(collection, registrar);
         }
 
+        public static IActivityRegistration RegisterActivity(this IServiceCollection collection, IContainerRegistrar registrar, Type activityType,
+            Type activityDefinitionType = null)
+        {
+            if (!activityType.ClosesType(typeof(IActivity<,>), out Type[] argumentTypes))
+            {
+                throw new ArgumentException($" activities must implement IActivity<TArguments, TLog>: {TypeCache.GetShortName(activityType)}",
+                    nameof(activityType));
+            }
 
-        interface IRegister
+            if (activityDefinitionType != null)
+            {
+                if (!activityDefinitionType.ClosesType(typeof(IActivityDefinition<,,>), out Type[] types) || types[0] != activityType)
+                {
+                    throw new ArgumentException(
+                        $"{TypeCache.GetShortName(activityDefinitionType)} is not an activity definition of {TypeCache.GetShortName(activityType)}",
+                        nameof(activityDefinitionType));
+                }
+
+                var activityRegistrar = (IActivityRegistrar)Activator.CreateInstance(typeof(ActivityDefinitionRegistrar<,,,>)
+                    .MakeGenericType(activityType, argumentTypes[0], argumentTypes[1], activityDefinitionType));
+
+                return activityRegistrar.Register(collection, registrar);
+            }
+
+
+            var register = (IActivityRegistrar)Activator.CreateInstance(typeof(ActivityRegistrar<,,>)
+                .MakeGenericType(activityType, argumentTypes[0], argumentTypes[1]));
+
+            return register.Register(collection, registrar);
+        }
+
+
+        interface IActivityRegistrar
         {
             IActivityRegistration Register(IServiceCollection collection, IContainerRegistrar registrar);
         }
 
 
-        class Activity<TActivity, TArguments, TLog> :
-            IRegister
+        class ActivityRegistrar<TActivity, TArguments, TLog> :
+            IActivityRegistrar
             where TActivity : class, IActivity<TArguments, TLog>
             where TArguments : class
             where TLog : class
@@ -93,19 +122,14 @@ namespace MassTransit.Configuration
             {
                 collection.TryAddScoped<TActivity>();
 
-                collection.TryAddTransient<IExecuteActivityScopeProvider<TActivity, TArguments>,
-                    ExecuteActivityScopeProvider<TActivity, TArguments>>();
-
-                collection.TryAddTransient<ICompensateActivityScopeProvider<TActivity, TLog>,
-                    CompensateActivityScopeProvider<TActivity, TLog>>();
-
-                return registrar.GetOrAdd<IActivityRegistration>(typeof(TActivity), _ => new ActivityRegistration<TActivity, TArguments, TLog>());
+                return registrar.GetOrAddRegistration<IActivityRegistration>(typeof(TActivity),
+                    _ => new ActivityRegistration<TActivity, TArguments, TLog>(registrar));
             }
         }
 
 
-        class ActivityDefinition<TActivity, TArguments, TLog, TDefinition> :
-            Activity<TActivity, TArguments, TLog>
+        class ActivityDefinitionRegistrar<TActivity, TArguments, TLog, TDefinition> :
+            ActivityRegistrar<TActivity, TArguments, TLog>
             where TDefinition : class, IActivityDefinition<TActivity, TArguments, TLog>
             where TActivity : class, IActivity<TArguments, TLog>
             where TArguments : class
@@ -115,8 +139,7 @@ namespace MassTransit.Configuration
             {
                 var registration = base.Register(collection, registrar);
 
-                collection.TryAddSingleton<TDefinition>();
-                collection.TryAddSingleton<IActivityDefinition<TActivity, TArguments, TLog>>(provider => provider.GetRequiredService<TDefinition>());
+                registrar.AddDefinition<IActivityDefinition<TActivity, TArguments, TLog>, TDefinition>();
 
                 return registration;
             }

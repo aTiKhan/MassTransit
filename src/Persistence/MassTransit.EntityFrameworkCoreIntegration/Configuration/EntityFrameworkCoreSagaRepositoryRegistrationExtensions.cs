@@ -73,6 +73,22 @@ namespace MassTransit
         }
 
         /// <summary>
+        /// Configure the Job Service saga state machines to use Entity Framework Core as the saga repository
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <param name="configure"></param>
+        /// <returns></returns>
+        public static IJobSagaRegistrationConfigurator EntityFrameworkRepository(this IJobSagaRegistrationConfigurator configurator,
+            Action<IEntityFrameworkSagaRepositoryConfigurator> configure = null)
+        {
+            var registrationProvider = new EntityFrameworkSagaRepositoryRegistrationProvider(configure);
+
+            configurator.UseRepositoryRegistrationProvider(registrationProvider);
+
+            return configurator;
+        }
+
+        /// <summary>
         /// Use the EntityFramework saga repository for sagas configured by type (without a specific generic call to AddSaga/AddSagaStateMachine)
         /// </summary>
         /// <param name="configurator"></param>
@@ -101,10 +117,46 @@ namespace MassTransit
         /// Configure the repository for use with SQL Server
         /// </summary>
         /// <param name="configurator"></param>
+        /// <param name="schemaName">The schema name to use if the table schema cannot be discovered</param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator<T> UseSqlServer<T>(this IEntityFrameworkSagaRepositoryConfigurator<T> configurator,
+            string schemaName)
+            where T : class, ISaga
+        {
+            if (schemaName == null)
+                throw new ArgumentNullException(nameof(schemaName));
+
+            configurator.LockStatementProvider = new SqlServerLockStatementProvider(schemaName);
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with SQL Server
+        /// </summary>
+        /// <param name="configurator"></param>
         /// <returns></returns>
         public static IEntityFrameworkSagaRepositoryConfigurator UseSqlServer(this IEntityFrameworkSagaRepositoryConfigurator configurator)
         {
             configurator.LockStatementProvider = new SqlServerLockStatementProvider();
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with SQL Server
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <param name="schemaName">The schema name to use if the table schema cannot be discovered</param>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator UseSqlServer(this IEntityFrameworkSagaRepositoryConfigurator configurator,
+            string schemaName)
+        {
+            if (schemaName == null)
+                throw new ArgumentNullException(nameof(schemaName));
+
+            configurator.LockStatementProvider = new SqlServerLockStatementProvider(schemaName);
 
             return configurator;
         }
@@ -127,10 +179,46 @@ namespace MassTransit
         /// Configure the repository for use with Postgres
         /// </summary>
         /// <param name="configurator"></param>
+        /// <param name="schemaName">The schema name to use if the table schema cannot be discovered</param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator<T> UsePostgres<T>(this IEntityFrameworkSagaRepositoryConfigurator<T> configurator,
+            string schemaName)
+            where T : class, ISaga
+        {
+            if (schemaName == null)
+                throw new ArgumentNullException(nameof(schemaName));
+
+            configurator.LockStatementProvider = new PostgresLockStatementProvider(schemaName);
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with Postgres
+        /// </summary>
+        /// <param name="configurator"></param>
         /// <returns></returns>
         public static IEntityFrameworkSagaRepositoryConfigurator UsePostgres(this IEntityFrameworkSagaRepositoryConfigurator configurator)
         {
             configurator.LockStatementProvider = new PostgresLockStatementProvider();
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with Postgres
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <param name="schemaName">The schema name to use if the table schema cannot be discovered</param>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator UsePostgres(this IEntityFrameworkSagaRepositoryConfigurator configurator,
+            string schemaName)
+        {
+            if (schemaName == null)
+                throw new ArgumentNullException(nameof(schemaName));
+
+            configurator.LockStatementProvider = new PostgresLockStatementProvider(schemaName);
 
             return configurator;
         }
@@ -162,12 +250,65 @@ namespace MassTransit
         }
 
         /// <summary>
+        /// Configure the repository for use with SQLite
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator<T> UseSqlite<T>(this IEntityFrameworkSagaRepositoryConfigurator<T> configurator)
+            where T : class, ISaga
+        {
+            configurator.LockStatementProvider = new SqliteLockStatementProvider();
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with SQLite
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator UseSqlite(this IEntityFrameworkSagaRepositoryConfigurator configurator)
+        {
+            configurator.LockStatementProvider = new SqliteLockStatementProvider();
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with Oracle
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator<T> UseOracle<T>(this IEntityFrameworkSagaRepositoryConfigurator<T> configurator)
+            where T : class, ISaga
+        {
+            configurator.LockStatementProvider = new OracleLockStatementProvider();
+
+            return configurator;
+        }
+
+        /// <summary>
+        /// Configure the repository for use with Oracle
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <returns></returns>
+        public static IEntityFrameworkSagaRepositoryConfigurator UseOracle(this IEntityFrameworkSagaRepositoryConfigurator configurator)
+        {
+            configurator.LockStatementProvider = new OracleLockStatementProvider();
+
+            return configurator;
+        }
+
+        /// <summary>
         /// Create EntityFramework saga repository
         /// </summary>
         /// <param name="registrationConfigurator"></param>
         /// <param name="configure"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
+        [Obsolete("This will be removed in a future release")]
         public static IEntityFrameworkSagaRepository CreateEntityFrameworkSagaRepository(this IRegistrationConfigurator registrationConfigurator,
             Action<DbContextOptionsBuilder> configure)
         {

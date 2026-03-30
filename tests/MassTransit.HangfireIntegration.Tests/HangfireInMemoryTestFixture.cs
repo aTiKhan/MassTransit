@@ -9,7 +9,7 @@
     using TestFramework;
 
 
-    public class HangfireInMemoryTestFixture :
+    public abstract class HangfireInMemoryTestFixture :
         InMemoryTestFixture
     {
         readonly string _queueName;
@@ -23,10 +23,10 @@
                 .UseMemoryStorage();
         }
 
-        public HangfireInMemoryTestFixture()
+        protected HangfireInMemoryTestFixture()
         {
             _queueName = "hangfire";
-            HangfireAddress = new Uri($"loopback://localhost/{_queueName}");
+            HangfireAddress = new Uri($"queue:{_queueName}");
 
             _scheduler = new Lazy<IMessageScheduler>(() =>
                 new MessageScheduler(new EndpointScheduleMessageProvider(() => GetSendEndpoint(HangfireAddress)), Bus.Topology));

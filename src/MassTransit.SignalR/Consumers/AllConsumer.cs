@@ -4,9 +4,7 @@
     using System.Collections.Generic;
     using System.Linq;
     using System.Threading.Tasks;
-    using Context;
     using Contracts;
-    using Logging;
     using Microsoft.AspNetCore.SignalR;
     using Utils;
 
@@ -35,7 +33,7 @@
 
             foreach (var connection in _hubLifetimeManager.Connections)
             {
-                if (excludedConnectionIds == null || !excludedConnectionIds.Contains(connection.ConnectionId, StringComparer.OrdinalIgnoreCase))
+                if (excludedConnectionIds == null || !excludedConnectionIds.Contains(connection.ConnectionId, StringComparer.Ordinal))
                     tasks.Add(connection.WriteAsync(message.Value).AsTask());
             }
 

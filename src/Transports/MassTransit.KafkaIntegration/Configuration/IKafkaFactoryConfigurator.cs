@@ -218,6 +218,12 @@ namespace MassTransit
         void Host(IReadOnlyList<string> servers, Action<IKafkaHostConfigurator> configure = null);
 
         /// <summary>
+        /// Configure Kafka bearer token refresh handler
+        /// </summary>
+        /// <param name="handler"></param>
+        void OAuthBearerTokenRefreshHandler(Action<IClient, string> handler);
+
+        /// <summary>
         /// Configure API versions
         /// </summary>
         /// <param name="configure"></param>
@@ -286,5 +292,11 @@ namespace MassTransit
         /// </summary>
         /// <param name="serializer"></param>
         void SetHeadersSerializer(IHeadersSerializer serializer);
+
+        /// <summary>
+        /// Set default serialization factory, this will be used for all producers and consumers
+        /// </summary>
+        /// <param name="factory"></param>
+        void SetSerializationFactory(IKafkaSerializerFactory factory);
     }
 }

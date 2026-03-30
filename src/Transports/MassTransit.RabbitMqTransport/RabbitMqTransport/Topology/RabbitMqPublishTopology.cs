@@ -26,12 +26,31 @@
             return GetMessageTopology<T>() as IRabbitMqMessagePublishTopologyConfigurator<T>;
         }
 
+        IRabbitMqMessagePublishTopologyConfigurator IRabbitMqPublishTopologyConfigurator.GetMessageTopology(Type messageType)
+        {
+            return GetMessageTopology(messageType) as IRabbitMqMessagePublishTopologyConfigurator;
+        }
+
+        public BrokerTopology GetPublishBrokerTopology()
+        {
+            var builder = new PublishEndpointBrokerTopologyBuilder(BrokerTopologyOptions);
+
+            ForEachMessageType<IRabbitMqMessagePublishTopology>(x =>
+            {
+                x.Apply(builder);
+
+                builder.Exchange = null;
+            });
+
+            return builder.BuildBrokerTopology();
+        }
+
         IRabbitMqMessagePublishTopologyConfigurator<T> IRabbitMqPublishTopologyConfigurator.GetMessageTopology<T>()
         {
             return GetMessageTopology<T>() as IRabbitMqMessagePublishTopologyConfigurator<T>;
         }
 
-        protected override IMessagePublishTopologyConfigurator CreateMessageTopology<T>(Type type)
+        protected override IMessagePublishTopologyConfigurator CreateMessageTopology<T>()
         {
             var exchangeTypeSelector = new MessageExchangeTypeSelector<T>(ExchangeTypeSelector);
 

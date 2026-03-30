@@ -4,7 +4,6 @@ namespace MassTransit.QuartzIntegration.Tests
     using System.Threading.Tasks;
     using NUnit.Framework;
     using Request_Specs;
-    using Saga;
     using Testing;
 
 
@@ -26,7 +25,7 @@ namespace MassTransit.QuartzIntegration.Tests
 
             Guid? saga = await _repository.ShouldContainSagaInState(x => x.MemberNumber == memberNumber, _machine, x => x.AddressValidationTimeout,
                 TestTimeout);
-            Assert.IsTrue(saga.HasValue);
+            Assert.That(saga.HasValue, Is.True);
         }
 
         InMemorySagaRepository<TestState> _repository;

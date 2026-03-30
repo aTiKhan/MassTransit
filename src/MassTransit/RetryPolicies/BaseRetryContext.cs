@@ -13,9 +13,9 @@ namespace MassTransit.RetryPolicies
         {
             Context = context;
             Exception = exception;
-            RetryCount = retryCount;
             CancellationToken = cancellationToken;
 
+            RetryCount = retryCount;
             RetryAttempt = retryCount + 1;
         }
 
@@ -29,7 +29,7 @@ namespace MassTransit.RetryPolicies
 
         public int RetryCount { get; }
 
-        public virtual TimeSpan? Delay => default;
+        public virtual TimeSpan? Delay => null;
 
         Type RetryContext.ContextType => typeof(TContext);
 

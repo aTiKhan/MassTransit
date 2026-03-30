@@ -1,11 +1,9 @@
 ﻿namespace MassTransit.RabbitMqTransport
 {
     using System;
-    using System.Threading;
     using System.Threading.Tasks;
     using Configuration;
     using Middleware;
-    using Topology;
     using Transports;
 
 
@@ -29,7 +27,7 @@
         }
 
         public Task<ISendTransport> CreateSendTransport(RabbitMqReceiveEndpointContext receiveEndpointContext,
-            IModelContextSupervisor modelContextSupervisor, Uri address)
+            IChannelContextSupervisor channelContextSupervisor, Uri address)
         {
             LogContext.SetCurrentIfNull(_hostConfiguration.LogContext);
 
@@ -41,13 +39,13 @@
 
             var brokerTopology = settings.GetBrokerTopology();
 
-            IPipe<ModelContext> configureTopology = new ConfigureRabbitMqTopologyFilter<SendSettings>(settings, brokerTopology).ToPipe();
+            var configureTopology = new ConfigureRabbitMqTopologyFilter<SendSettings>(settings, brokerTopology);
 
-            return CreateSendTransport(receiveEndpointContext, modelContextSupervisor, configureTopology, settings.ExchangeName, endpointAddress);
+            return CreateSendTransport(receiveEndpointContext, channelContextSupervisor, configureTopology, settings.ExchangeName, endpointAddress);
         }
 
         public Task<ISendTransport> CreatePublishTransport<T>(RabbitMqReceiveEndpointContext receiveEndpointContext,
-            IModelContextSupervisor modelContextSupervisor)
+            IChannelContextSupervisor channelContextSupervisor)
             where T : class
         {
             LogContext.SetCurrentIfNull(_hostConfiguration.LogContext);
@@ -58,75 +56,31 @@
 
             var brokerTopology = publishTopology.GetBrokerTopology();
 
-            IPipe<ModelContext> configureTopology = new ConfigureRabbitMqTopologyFilter<SendSettings>(settings, brokerTopology).ToPipe();
+            var configureTopology = new ConfigureRabbitMqTopologyFilter<SendSettings>(settings, brokerTopology);
 
             var endpointAddress = settings.GetSendAddress(_hostConfiguration.HostAddress);
 
-            return CreateSendTransport(receiveEndpointContext, modelContextSupervisor, configureTopology, publishTopology.Exchange.ExchangeName,
+            return CreateSendTransport(receiveEndpointContext, channelContextSupervisor, configureTopology, publishTopology.Exchange.ExchangeName,
                 endpointAddress);
         }
 
-        Task<ISendTransport> CreateSendTransport(RabbitMqReceiveEndpointContext receiveEndpointContext,
-            IModelContextSupervisor modelContextSupervisor, IPipe<ModelContext> pipe, string exchangeName, RabbitMqEndpointAddress endpointAddress)
+        Task<ISendTransport> CreateSendTransport(ReceiveEndpointContext receiveEndpointContext, IChannelContextSupervisor channelContextSupervisor,
+            ConfigureRabbitMqTopologyFilter<SendSettings> filter, string exchangeName, RabbitMqEndpointAddress endpointAddress)
         {
-            var supervisor = new ModelContextSupervisor(modelContextSupervisor);
+            var supervisor = new ChannelContextSupervisor(channelContextSupervisor);
 
-            var delayedExchangeAddress = endpointAddress.GetDelayAddress();
+            var delaySettings = endpointAddress.GetDelaySettings();
 
-            var delaySettings = new RabbitMqDelaySettings(delayedExchangeAddress);
+            IPipe<ChannelContext> delayPipe = new ConfigureRabbitMqTopologyFilter<DelaySettings>(delaySettings, delaySettings.GetBrokerTopology()).ToPipe();
 
-            delaySettings.BindToExchange(exchangeName);
+            var sendTransportContext = new RabbitMqSendTransportContext(_hostConfiguration, receiveEndpointContext, supervisor, filter, exchangeName,
+                delayPipe, delaySettings.ExchangeName);
 
-            IPipe<ModelContext> delayPipe = new ConfigureRabbitMqTopologyFilter<DelaySettings>(delaySettings, delaySettings.GetBrokerTopology()).ToPipe();
+            var transport = new SendTransport<ChannelContext>(sendTransportContext);
 
-            var sendTransportContext = new SendTransportContext(_hostConfiguration, receiveEndpointContext, supervisor, pipe, exchangeName, delayPipe,
-                delaySettings.ExchangeName);
-
-            var transport = new RabbitMqSendTransport(sendTransportContext);
-
-            modelContextSupervisor.AddSendAgent(transport);
+            channelContextSupervisor.AddSendAgent(transport);
 
             return Task.FromResult<ISendTransport>(transport);
-        }
-
-
-        class SendTransportContext :
-            BaseSendTransportContext,
-            RabbitMqSendTransportContext
-        {
-            readonly IRabbitMqHostConfiguration _hostConfiguration;
-
-            public SendTransportContext(IRabbitMqHostConfiguration hostConfiguration, ReceiveEndpointContext receiveEndpointContext,
-                IModelContextSupervisor modelContextSupervisor,
-                IPipe<ModelContext> configureTopologyPipe, string exchange,
-                IPipe<ModelContext> delayConfigureTopologyPipe, string delayExchange)
-                : base(hostConfiguration, receiveEndpointContext.Serialization)
-            {
-                _hostConfiguration = hostConfiguration;
-                ModelContextSupervisor = modelContextSupervisor;
-                ConfigureTopologyPipe = configureTopologyPipe;
-                Exchange = exchange;
-
-                DelayConfigureTopologyPipe = delayConfigureTopologyPipe;
-                DelayExchange = delayExchange;
-            }
-
-            public IPipe<ModelContext> ConfigureTopologyPipe { get; }
-            public IPipe<ModelContext> DelayConfigureTopologyPipe { get; }
-            public string DelayExchange { get; }
-            public string Exchange { get; }
-            public IModelContextSupervisor ModelContextSupervisor { get; }
-
-            public Task Send(IPipe<ModelContext> pipe, CancellationToken cancellationToken)
-            {
-                return _hostConfiguration.Retry(() => ModelContextSupervisor.Send(pipe, cancellationToken), ModelContextSupervisor, cancellationToken);
-            }
-
-            public void Probe(ProbeContext context)
-            {
-            }
-
-            public override string EntityName => Exchange;
         }
     }
 }

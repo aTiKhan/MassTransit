@@ -5,28 +5,23 @@ namespace MassTransit.AzureCosmos.Saga
 
 
     public class CosmosDatabaseContext<TSaga> :
-        DatabaseContext<TSaga>,
-        IDisposable
+        DatabaseContext<TSaga>
         where TSaga : class, ISaga
     {
-        readonly CosmosClient _client;
         readonly Action<ItemRequestOptions> _itemRequestOptions;
+        readonly Action<CosmosLinqSerializerOptions> _linqSerializerOptions;
 
-        public CosmosDatabaseContext(Container container, Action<ItemRequestOptions> itemRequestOptions = null,
-            Action<QueryRequestOptions> queryRequestOptions = null)
+        public CosmosDatabaseContext(Container container,
+            Action<QueryRequestOptions> queryRequestOptions = null,
+            Action<ItemRequestOptions> itemRequestOptions = null,
+            Action<CosmosLinqSerializerOptions> linqSerializerOptions = null)
         {
             _itemRequestOptions = itemRequestOptions;
+            _linqSerializerOptions = linqSerializerOptions;
 
             QueryRequestOptions = queryRequestOptions;
 
             Container = container;
-        }
-
-        internal CosmosDatabaseContext(CosmosClient client, Container container, Action<ItemRequestOptions> itemRequestOptions,
-            Action<QueryRequestOptions> queryRequestOptions)
-            : this(container, itemRequestOptions, queryRequestOptions)
-        {
-            _client = client;
         }
 
         public Container Container { get; }
@@ -44,9 +39,15 @@ namespace MassTransit.AzureCosmos.Saga
             return options;
         }
 
-        public void Dispose()
+        public CosmosLinqSerializerOptions GetLinqSerializerOptions()
         {
-            _client?.Dispose();
+            if (_linqSerializerOptions == null)
+                return default;
+
+            var options = new CosmosLinqSerializerOptions();
+            _linqSerializerOptions?.Invoke(options);
+
+            return options;
         }
     }
 }

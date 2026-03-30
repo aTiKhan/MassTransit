@@ -12,12 +12,12 @@ namespace MassTransit.EventHubIntegration.Configuration
         IEventHubProducerConfigurator,
         IEventHubProducerSpecification
     {
+        readonly List<Action<ISendPipeConfigurator>> _configureSend;
         readonly IEventHubHostConfiguration _hostConfiguration;
         readonly IHostSettings _hostSettings;
         readonly SendObservable _sendObservers;
         readonly ISerializationConfiguration _serializationConfiguration;
         Action<EventHubProducerClientOptions> _configureOptions;
-        Action<ISendPipeConfigurator> _configureSend;
 
         public EventHubProducerSpecification(IEventHubHostConfiguration hostConfiguration, IHostSettings hostSettings)
         {
@@ -25,6 +25,7 @@ namespace MassTransit.EventHubIntegration.Configuration
             _hostSettings = hostSettings;
             _serializationConfiguration = new SerializationConfiguration();
             _sendObservers = new SendObservable();
+            _configureSend = new List<Action<ISendPipeConfigurator>>();
         }
 
         public ConnectHandle ConnectSendObserver(ISendObserver observer)
@@ -34,7 +35,7 @@ namespace MassTransit.EventHubIntegration.Configuration
 
         public void ConfigureSend(Action<ISendPipeConfigurator> callback)
         {
-            _configureSend = callback ?? throw new ArgumentNullException(nameof(callback));
+            _configureSend.Add(callback ?? throw new ArgumentNullException(nameof(callback)));
         }
 
         public Action<EventHubProducerClientOptions> ConfigureOptions
@@ -55,14 +56,21 @@ namespace MassTransit.EventHubIntegration.Configuration
                 yield return this.Failure("HostSettings", "is invalid");
         }
 
-        public IEventHubProducerProvider CreateProducerProvider(IBusInstance busInstance)
+        public EventHubSendTransportContext CreateSendTransportContext(string eventHubName, IBusInstance busInstance)
         {
             var sendConfiguration = new SendPipeConfiguration(busInstance.HostConfiguration.Topology.SendTopology);
-            _configureSend?.Invoke(sendConfiguration.Configurator);
+            for (var i = 0; i < _configureSend.Count; i++)
+                _configureSend[i].Invoke(sendConfiguration.Configurator);
+
             var sendPipe = sendConfiguration.CreatePipe();
 
-            return new EventHubProducerProvider(_hostConfiguration, busInstance, sendPipe, _sendObservers,
+            var supervisor = new ProducerContextSupervisor(_hostConfiguration.ConnectionContextSupervisor, eventHubName);
+
+            var transportContext = new EventHubProducerSendTransportContext(supervisor, sendPipe, busInstance.HostConfiguration, eventHubName,
                 _serializationConfiguration.CreateSerializerCollection());
+            transportContext.ConnectSendObserver(_sendObservers);
+
+            return transportContext;
         }
     }
 }

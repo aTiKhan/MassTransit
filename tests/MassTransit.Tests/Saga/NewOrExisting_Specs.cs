@@ -2,7 +2,6 @@ namespace MassTransit.Tests.Saga
 {
     using System;
     using System.Threading.Tasks;
-    using MassTransit.Saga;
     using MassTransit.Testing;
     using NUnit.Framework;
     using TestFramework;
@@ -22,9 +21,12 @@ namespace MassTransit.Tests.Saga
             await InputQueueSendEndpoint.Send(message);
 
             var saga = _sagaHarness.Sagas.Contains(sagaId);
-            Assert.That(saga, Is.Not.Null);
+            await Assert.MultipleAsync(async () =>
+            {
+                Assert.That(saga, Is.Not.Null);
 
-            Assert.That(await _sagaHarness.Consumed.Any<EventMessage>());
+                Assert.That(await _sagaHarness.Consumed.Any<EventMessage>());
+            });
         }
 
         [Test]
@@ -37,9 +39,12 @@ namespace MassTransit.Tests.Saga
             await InputQueueSendEndpoint.Send(message);
 
             var saga = _sagaHarness.Sagas.Contains(sagaId);
-            Assert.That(saga, Is.Not.Null);
+            await Assert.MultipleAsync(async () =>
+            {
+                Assert.That(saga, Is.Not.Null);
 
-            Assert.That(await _sagaHarness.Consumed.Any<CreateMessage>());
+                Assert.That(await _sagaHarness.Consumed.Any<CreateMessage>());
+            });
 
             await InputQueueSendEndpoint.Send(new EventMessage(sagaId));
 

@@ -2,15 +2,14 @@ namespace MassTransit.DependencyInjection.Testing
 {
     using System;
     using System.Collections.Generic;
-    using System.Diagnostics;
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
-    using Courier;
     using MassTransit.Testing;
     using MassTransit.Testing.Implementations;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Hosting;
+    using Microsoft.Extensions.Options;
 
 
     public class ContainerTestHarness :
@@ -32,11 +31,14 @@ namespace MassTransit.DependencyInjection.Testing
         IEnumerable<IHostedService> _hostedServices;
         CancellationTokenRegistration _registration;
 
-        public ContainerTestHarness(IServiceProvider provider)
+        public ContainerTestHarness(IServiceProvider provider, IOptions<TestHarnessOptions> options)
         {
             _provider = provider;
 
             _handles = new List<ConnectHandle>(5);
+
+            TestTimeout = options.Value.TestTimeout;
+            TestInactivityTimeout = options.Value.TestInactivityTimeout;
 
             _inactivityObserver = new Lazy<AsyncInactivityObserver>(() => new AsyncInactivityObserver(TestInactivityTimeout, CancellationToken));
 
@@ -46,6 +48,8 @@ namespace MassTransit.DependencyInjection.Testing
             _sent = new Lazy<BusTestSendObserver>(() => new BusTestSendObserver(TestTimeout, TestInactivityTimeout, InactivityToken));
 
             _scope = new Lazy<IServiceScope>(() => _provider.CreateScope());
+
+            provider.GetService<TestActivityListener>();
         }
 
         public async ValueTask DisposeAsync()
@@ -92,6 +96,9 @@ namespace MassTransit.DependencyInjection.Testing
         public IPublishedMessageList Published => _published.Value.Messages;
         public ISentMessageList Sent => _sent.Value.Messages;
 
+        public IServiceScope Scope => _scope.Value;
+        public IServiceProvider Provider => _provider;
+
         public IEndpointNameFormatter EndpointNameFormatter => _provider.GetService<IEndpointNameFormatter>() ?? DefaultEndpointNameFormatter.Instance;
 
         public IBus Bus => _provider.GetRequiredService<IBus>();
@@ -136,9 +143,25 @@ namespace MassTransit.DependencyInjection.Testing
         {
             var provider = _scope.Value.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
 
-            var shortName = new Uri($"queue:{EndpointNameFormatter.Consumer<T>()}");
+            return provider.GetSendEndpoint(GetConsumerAddress<T>());
+        }
 
-            return provider.GetSendEndpoint(shortName);
+        public Task<ISendEndpoint> GetHandlerEndpoint<T>()
+            where T : class
+        {
+            return GetConsumerEndpoint<MessageHandlerConsumer<T>>();
+        }
+
+        public Uri GetConsumerAddress<T>()
+            where T : class, IConsumer
+        {
+            return new Uri($"queue:{EndpointNameFormatter.Consumer<T>()}");
+        }
+
+        public Uri GetHandlerAddress<T>()
+            where T : class
+        {
+            return GetConsumerAddress<MessageHandlerConsumer<T>>();
         }
 
         public Task<ISendEndpoint> GetSagaEndpoint<T>()
@@ -146,9 +169,13 @@ namespace MassTransit.DependencyInjection.Testing
         {
             var provider = _scope.Value.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
 
-            var shortName = new Uri($"queue:{EndpointNameFormatter.Saga<T>()}");
+            return provider.GetSendEndpoint(GetSagaAddress<T>());
+        }
 
-            return provider.GetSendEndpoint(shortName);
+        public Uri GetSagaAddress<T>()
+            where T : class, ISaga
+        {
+            return new Uri($"queue:{EndpointNameFormatter.Saga<T>()}");
         }
 
         public Task<ISendEndpoint> GetExecuteActivityEndpoint<T, TArguments>()
@@ -157,22 +184,28 @@ namespace MassTransit.DependencyInjection.Testing
         {
             var provider = _scope.Value.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
 
-            var shortName = new Uri($"queue:{EndpointNameFormatter.ExecuteActivity<T, TArguments>()}");
-
-            return provider.GetSendEndpoint(shortName);
+            return provider.GetSendEndpoint(GetExecuteActivityAddress<T, TArguments>());
         }
 
-        public Task Start()
+        public Uri GetExecuteActivityAddress<T, TArguments>()
+            where T : class, IExecuteActivity<TArguments>
+            where TArguments : class
         {
-            _hostedServices = _provider.GetService<IEnumerable<IHostedService>>();
+            return new Uri($"queue:{EndpointNameFormatter.ExecuteActivity<T, TArguments>()}");
+        }
+
+        public async Task Start()
+        {
+            _hostedServices = _provider.GetServices<IHostedService>().ToArray();
             if (_hostedServices == null)
                 throw new ConfigurationException("The MassTransit hosted service was not found.");
 
-            return Task.WhenAll(_hostedServices.Select(x => x.StartAsync(CancellationToken)));
+            foreach (var service in _hostedServices)
+                await service.StartAsync(CancellationToken).ConfigureAwait(false);
         }
 
-        public TimeSpan TestTimeout { get; set; } = Debugger.IsAttached ? TimeSpan.FromMinutes(50) : TimeSpan.FromSeconds(30);
-        public TimeSpan TestInactivityTimeout { get; set; } = TimeSpan.FromSeconds(1.2);
+        public TimeSpan TestTimeout { get; set; }
+        public TimeSpan TestInactivityTimeout { get; set; }
 
         /// <summary>
         /// CancellationToken that is cancelled when the test inactivity timeout has elapsed with no bus activity
@@ -225,6 +258,13 @@ namespace MassTransit.DependencyInjection.Testing
             _handles.Add(bus.ConnectPublishObserver(_published.Value));
             _handles.Add(bus.ConnectReceiveObserver(_received.Value));
             _handles.Add(bus.ConnectSendObserver(_sent.Value));
+        }
+
+        public void PostStart(IBus bus)
+        {
+            _ = _received.Value.RestartTimer();
+            _ = _published.Value.RestartTimer();
+            _ = _sent.Value.RestartTimer();
         }
     }
 }

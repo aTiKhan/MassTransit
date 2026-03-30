@@ -1,65 +1,57 @@
 ﻿namespace MassTransit.KafkaIntegration
 {
     using System;
-    using System.Threading.Tasks;
     using Confluent.Kafka;
-    using Serializers;
     using Transports;
 
 
     public sealed class KafkaReceiveContext<TKey, TValue> :
         BaseReceiveContext,
-        KafkaConsumeContext<TKey>,
-        ReceiveLockContext
+        KafkaConsumeContext<TKey>
         where TValue : class
     {
-        readonly IHeadersDeserializer _headersDeserializer;
-        readonly IConsumerLockContext<TKey, TValue> _lockContext;
-        readonly ConsumeResult<TKey, TValue> _result;
-        IHeaderProvider _headerProvider;
+        readonly KafkaReceiveEndpointContext<TKey, TValue> _context;
+        readonly Lazy<IHeaderProvider> _headerProvider;
+        readonly Lazy<TKey> _key;
+        readonly ConsumeResult<byte[], byte[]> _result;
 
-        public KafkaReceiveContext(ConsumeResult<TKey, TValue> result, ReceiveEndpointContext receiveEndpointContext,
-            IConsumerLockContext<TKey, TValue> lockContext, IHeadersDeserializer headersDeserializer)
-            : base(false, receiveEndpointContext)
+        public KafkaReceiveContext(ConsumeResult<byte[], byte[]> result, KafkaReceiveEndpointContext<TKey, TValue> context)
+            : base(false, context)
         {
             _result = result;
-            _lockContext = lockContext;
-            _headersDeserializer = headersDeserializer;
+            _context = context;
 
-            Body = new NotSupportedMessageBody();
+            Body = new BytesMessageBody(_result.Message.Value);
+            InputAddress = context.GetInputAddress(_result.Topic);
 
-            var consumeContext = new KafkaConsumeContext<TKey, TValue>(this, _result);
+            _key = new Lazy<TKey>(() => _context.KeyDeserializer.DeserializeKey(result));
+            _headerProvider = new Lazy<IHeaderProvider>(() =>
+                new KafkaHeaderProvider(_result.Message, _context.HeadersDeserializer.Deserialize(_result.Message.Headers)));
+
+            var messageContext = new KafkaMessageContext(_result, this);
+
+            var serializerContext = new KafkaSerializationContext<TValue>(_result, context.ValueDeserializer, messageContext);
+
+            var consumeContext = new KafkaConsumeContext<TKey, TValue>(this, serializerContext);
 
             AddOrUpdatePayload<ConsumeContext>(() => consumeContext, existing => consumeContext);
         }
 
-        protected override IHeaderProvider HeaderProvider => _headerProvider ??= _headersDeserializer.Deserialize(_result.Message.Headers);
+        protected override IHeaderProvider HeaderProvider => _headerProvider.Value;
 
         public override MessageBody Body { get; }
 
-        public TKey Key => _result.Message.Key;
+        public string GroupId => _context.GroupId;
+
+        public TKey Key => _key.Value;
 
         public string Topic => _result.Topic;
 
         public int Partition => _result.Partition;
 
         public long Offset => _result.Offset;
+        public bool IsPartitionEof => _result.IsPartitionEOF;
 
         public DateTime CheckpointUtcDateTime => _result.Message.Timestamp.UtcDateTime;
-
-        public Task Complete()
-        {
-            return _lockContext.Complete(_result);
-        }
-
-        public Task Faulted(Exception exception)
-        {
-            return _lockContext.Faulted(_result, exception);
-        }
-
-        public Task ValidateLockStatus()
-        {
-            return Task.CompletedTask;
-        }
     }
 }

@@ -6,16 +6,22 @@ namespace MassTransit.ActiveMqTransport.Tests
     using System.Threading.Tasks;
     using Configuration;
     using Internals;
-    using MassTransit.Testing;
     using NUnit.Framework;
     using TestFramework.Messages;
+    using Testing;
     using Topology;
     using Util;
 
 
-    [TestFixture]
+    [TestFixture(ActiveMqHostAddress.ActiveMqScheme)]
+    [TestFixture(ActiveMqHostAddress.AmqpScheme)]
     public class Using_the_handler_test_factory
     {
+        public Using_the_handler_test_factory(string protocol)
+        {
+            this.protocol = protocol;
+        }
+
         [Test]
         public void Should_have_published_a_message_of_type_b()
         {
@@ -54,11 +60,12 @@ namespace MassTransit.ActiveMqTransport.Tests
 
         ActiveMqTestHarness _harness;
         HandlerTestHarness<A> _handler;
+        private readonly string protocol;
 
         [OneTimeSetUp]
         public async Task Setup()
         {
-            _harness = new ActiveMqTestHarness();
+            _harness = new ActiveMqTestHarness(protocol);
             _handler = _harness.Handler<A>(async context =>
             {
                 var endpoint = await context.GetSendEndpoint(context.SourceAddress);
@@ -78,6 +85,7 @@ namespace MassTransit.ActiveMqTransport.Tests
         public async Task Teardown()
         {
             await _harness.Stop();
+            _harness.Dispose();
         }
 
 
@@ -106,16 +114,37 @@ namespace MassTransit.ActiveMqTransport.Tests
     public class Configuring_ActiveMQ
     {
         [Test]
-        public void Failover_should_take_precendence_in_uri_construction()
+        public void Failover_should_take_precendence_in_uri_construction_activemq()
         {
-            var settings = new ConfigurationHostSettings(new Uri("activemq://fake-host"))
+            var settings = new OpenWireHostSettings(new Uri($"{ActiveMqHostAddress.ActiveMqScheme}://fake-host"))
             {
                 Port = 61616,
-                FailoverHosts = new[] { "failover1", "failover2" }
+                FailoverHosts = new[] { "failover1", "failover2" },
             };
+            settings.TransportOptions.Add("reconnectAttempts", "-1");
+            settings.TransportOptions.Add("transport.maxReconnectAttempts", "5");
+            settings.TransportOptions.Add("transport.sendBufferSize", "10");
 
-            Assert.That(settings.BrokerAddress, Is.EqualTo(new Uri(
-                "activemq:failover:(tcp://failover1:61616/,tcp://failover2:61616/)?wireFormat.tightEncodingEnabled=true&nms.AsyncSend=true")));
+            Assert.That(settings.BrokerAddress,
+                Is.EqualTo(new Uri(
+                    "activemq:failover:(tcp://failover1:61616/?wireFormat.tightEncodingEnabled=true&transport.sendBufferSize=10,tcp://failover2:61616/?wireFormat.tightEncodingEnabled=true&transport.sendBufferSize=10)?transport.reconnectAttempts=-1&transport.maxReconnectAttempts=5")));
+        }
+
+        [Test]
+        public void Failover_should_take_precendence_in_uri_construction_amqp()
+        {
+            var settings = new AmqpHostSettings(new Uri($"{ActiveMqHostAddress.AmqpScheme}://fake-host"))
+            {
+                Port = 61616,
+                FailoverHosts = new[] { "failover1", "failover2:5672" },
+            };
+            settings.TransportOptions.Add("reconnectAttempts", "-1");
+            settings.TransportOptions.Add("failover.maxReconnectAttempts", "5");
+            settings.TransportOptions.Add("transport.sendBufferSize", "10");
+            
+
+            Assert.That(settings.BrokerAddress,
+                Is.EqualTo(new Uri("failover:(amqp://failover1:61616/?transport.sendBufferSize=10,amqp://failover2:5672/?transport.sendBufferSize=10)?failover.reconnectAttempts=-1&failover.maxReconnectAttempts=5")));
         }
 
         [Test]
@@ -127,11 +156,16 @@ namespace MassTransit.ActiveMqTransport.Tests
         }
 
         [Test]
-        public async Task Should_connect_locally()
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
+        public async Task Should_connect_locally(string protocol)
         {
+            var host = (protocol == ActiveMqHostAddress.AmqpScheme)
+                ? new Uri("amqp://localhost:5672")
+                : new Uri("activemq://localhost:61616");
             var busControl = Bus.Factory.CreateUsingActiveMq(cfg =>
             {
-                cfg.Host("localhost", 61616, h =>
+                cfg.Host(host, h =>
                 {
                     h.Username("admin");
                     h.Password("admin");
@@ -144,9 +178,11 @@ namespace MassTransit.ActiveMqTransport.Tests
         }
 
         [Test]
-        public async Task Should_connect_locally_with_test_harness()
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
+        public async Task Should_connect_locally_with_test_harness(string protocol)
         {
-            var harness = new ActiveMqTestHarness();
+            var harness = new ActiveMqTestHarness(protocol);
 
             await harness.Start();
 
@@ -154,9 +190,11 @@ namespace MassTransit.ActiveMqTransport.Tests
         }
 
         [Test]
-        public async Task Should_connect_locally_with_test_harness_and_a_handler()
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
+        public async Task Should_connect_locally_with_test_harness_and_a_handler(string protocol)
         {
-            var harness = new ActiveMqTestHarness();
+            var harness = new ActiveMqTestHarness(protocol);
             HandlerTestHarness<PingMessage> handler = harness.Handler<PingMessage>(async context =>
             {
             });
@@ -169,9 +207,11 @@ namespace MassTransit.ActiveMqTransport.Tests
         }
 
         [Test]
-        public async Task Should_connect_locally_with_test_harness_and_a_publisher()
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
+        public async Task Should_connect_locally_with_test_harness_and_a_publisher(string protocol)
         {
-            var harness = new ActiveMqTestHarness();
+            var harness = new ActiveMqTestHarness(protocol);
             HandlerTestHarness<PingMessage> handler = harness.Handler<PingMessage>();
             HandlerTestHarness<PongMessage> handler2 = harness.Handler<PongMessage>();
 
@@ -193,9 +233,11 @@ namespace MassTransit.ActiveMqTransport.Tests
         }
 
         [Test]
-        public async Task Should_connect_locally_with_test_harness_and_a_publisher_happy()
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
+        public async Task Should_connect_locally_with_test_harness_and_a_publisher_happy(string protocol)
         {
-            var harness = new ActiveMqTestHarness();
+            var harness = new ActiveMqTestHarness(protocol);
             HandlerTestHarness<PingMessage> handler = harness.Handler<PingMessage>();
 
             await harness.Start();
@@ -211,9 +253,11 @@ namespace MassTransit.ActiveMqTransport.Tests
         }
 
         [Test]
-        public async Task Should_connect_locally_with_test_harness_and_publish_without_consumer()
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
+        public async Task Should_connect_locally_with_test_harness_and_publish_without_consumer(string protocol)
         {
-            var harness = new ActiveMqTestHarness();
+            var harness = new ActiveMqTestHarness(protocol);
 
             await harness.Start();
 
@@ -224,20 +268,16 @@ namespace MassTransit.ActiveMqTransport.Tests
 
         [Test]
         [Category("Flaky")]
-        [TestCase("activemq")]
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
         [TestCase("artemis")]
         public async Task Should_do_a_bunch_of_requests_and_responses(string flavor)
         {
             var bus = Bus.Factory.CreateUsingActiveMq(cfg =>
             {
+                cfg.ConfigureHost(flavor);
                 if (flavor == "artemis")
                 {
-                    cfg.Host("localhost", 61618, cfgHost =>
-                    {
-                        cfgHost.Username("admin");
-                        cfgHost.Password("admin");
-                    });
-                    cfg.EnableArtemisCompatibility();
                     cfg.SetTemporaryQueueNamePrefix("myprefix.");
                 }
 
@@ -264,19 +304,16 @@ namespace MassTransit.ActiveMqTransport.Tests
 
         [Test]
         [Category("Flaky")]
-        [TestCase("activemq")]
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
         [TestCase("artemis")]
         public async Task Should_do_a_bunch_of_requests_and_responses_explicit_configuration(string flavor)
         {
             var bus = Bus.Factory.CreateUsingActiveMq(cfg =>
             {
+                cfg.ConfigureHost(flavor);
                 if (flavor == "artemis")
                 {
-                    cfg.Host("localhost", 61618, cfgHost =>
-                    {
-                        cfgHost.Username("admin");
-                        cfgHost.Password("admin");
-                    });
                     cfg.SetConsumerEndpointQueueNameFormatter(new ArtemisConsumerEndpointQueueNameFormatter());
                     cfg.SetTemporaryQueueNameFormatter(new PrefixTemporaryQueueNameFormatter("myprefix."));
                 }
@@ -303,7 +340,8 @@ namespace MassTransit.ActiveMqTransport.Tests
 
         [Test]
         [Category("Flaky")]
-        [TestCase("activemq")]
+        [TestCase(ActiveMqHostAddress.ActiveMqScheme)]
+        [TestCase(ActiveMqHostAddress.AmqpScheme)]
         [TestCase("artemis")]
         public async Task Should_succeed_and_connect_when_properly_configured(string flavor)
         {
@@ -313,15 +351,7 @@ namespace MassTransit.ActiveMqTransport.Tests
 
             var busControl = Bus.Factory.CreateUsingActiveMq(cfg =>
             {
-                if (flavor == "artemis")
-                {
-                    cfg.Host("localhost", 61618, cfgHost =>
-                    {
-                        cfgHost.Username("admin");
-                        cfgHost.Password("admin");
-                    });
-                    cfg.EnableArtemisCompatibility();
-                }
+                cfg.ConfigureHost(flavor);
 
                 cfg.ReceiveEndpoint("input-queue", x =>
                 {

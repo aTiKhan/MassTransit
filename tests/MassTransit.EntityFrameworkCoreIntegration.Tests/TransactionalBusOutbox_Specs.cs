@@ -4,6 +4,7 @@
     using System.Threading.Tasks;
     using System.Transactions;
     using Internals;
+    using MassTransit.Tests;
     using MassTransit.Tests.Saga.Messages;
     using Microsoft.EntityFrameworkCore;
     using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -24,10 +25,10 @@
         public async Task Should_not_publish_properly()
         {
             var message = new InitiateSimpleSaga();
-            var product = new Product {Name = "Should_not_publish_properly"};
+            var product = new Product { Name = "Should_not_publish_properly" };
             var transactionOutbox = new TransactionalEnlistmentBus(Bus);
 
-            using (var dbContext = GetDbContext())
+            await using (var dbContext = GetDbContext())
             using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
             {
                 EntityEntry<Product> entity = dbContext.Products.Add(product);
@@ -38,9 +39,9 @@
 
             Assert.That(async () => await _received.OrTimeout(s: 3), Throws.TypeOf<TimeoutException>());
 
-            using (var dbContext = GetDbContext())
+            await using (var dbContext = GetDbContext())
             {
-                Assert.IsFalse(await dbContext.Products.AnyAsync(x => x.Id == product.Id));
+                Assert.That(await dbContext.Products.AnyAsync(x => x.Id == product.Id), Is.False);
             }
         }
 
@@ -48,10 +49,10 @@
         public async Task Should_publish_after_db_create()
         {
             var message = new InitiateSimpleSaga();
-            var product = new Product {Name = "Should_publish_after_db_create"};
+            var product = new Product { Name = "Should_publish_after_db_create" };
             var transactionOutbox = new TransactionalEnlistmentBus(Bus);
 
-            using (var dbContext = GetDbContext())
+            await using (var dbContext = GetDbContext())
             using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
             {
                 dbContext.Products.Add(product);
@@ -68,9 +69,9 @@
             // Now has published
             await _received;
 
-            using (var dbContext = GetDbContext())
+            await using (var dbContext = GetDbContext())
             {
-                Assert.IsTrue(await dbContext.Products.AnyAsync(x => x.Id == product.Id));
+                Assert.That(await dbContext.Products.AnyAsync(x => x.Id == product.Id), Is.True);
             }
         }
 
@@ -82,7 +83,7 @@
             var product = new Product { Name = "Should_publish_after_db_create" };
             var bus = new TransactionalBus(Bus);
 
-            using (var dbContext = GetDbContext())
+            await using (var dbContext = GetDbContext())
             {
                 dbContext.Products.Add(product);
                 await dbContext.SaveChangesAsync();
@@ -98,13 +99,15 @@
             // Now has published
             await _received;
 
-            using (var dbContext = GetDbContext())
+            await using (var dbContext = GetDbContext())
             {
-                Assert.IsTrue(await dbContext.Products.AnyAsync(x => x.Id == product.Id));
+                Assert.That(await dbContext.Products.AnyAsync(x => x.Id == product.Id), Is.True);
             }
         }
 
+        #pragma warning disable NUnit1032
         Task<ConsumeContext<InitiateSimpleSaga>> _received;
+        #pragma warning restore NUnit1032
 
         TransactionOutboxTestsDbContext GetDbContext()
         {

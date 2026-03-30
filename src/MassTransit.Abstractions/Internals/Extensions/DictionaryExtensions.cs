@@ -2,7 +2,6 @@ namespace MassTransit.Internals
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
 
 
     public static class DictionaryExtensions
@@ -18,17 +17,77 @@ namespace MassTransit.Internals
             return value;
         }
 
-        public static IDictionary<TKey, TValue> MergeLeft<TKey, TValue>(this IDictionary<TKey, TValue> source, params IDictionary<TKey, TValue>[] others)
+        public static IDictionary<string, TValue> MergeLeft<TValue>(this IDictionary<string, TValue> source, params IDictionary<string, TValue>[] others)
         {
-            var result = new Dictionary<TKey, TValue>(source.Count);
+            var result = new Dictionary<string, TValue>(source.Count, StringComparer.OrdinalIgnoreCase);
 
-            foreach (IDictionary<TKey, TValue> dictionary in new[] {source}.Concat(others))
+            void UpdateDictionaryWithElements(IDictionary<string, TValue> dictionary)
             {
-                foreach (KeyValuePair<TKey, TValue> element in dictionary)
-                    result[element.Key] = element.Value;
+                foreach (KeyValuePair<string, TValue> element in dictionary)
+                {
+                    if (result.ContainsKey(element.Key))
+                    {
+                        if (element.Value != null)
+                            result[element.Key] = element.Value;
+                    }
+                    else
+                        result[element.Key] = element.Value;
+                }
             }
 
+            UpdateDictionaryWithElements(source);
+
+            foreach (IDictionary<string, TValue> dictionary in others)
+                UpdateDictionaryWithElements(dictionary);
+
             return result;
+        }
+
+        public static Dictionary<string, object> SetValue(this Dictionary<string, object> dictionary, string key, string? value)
+        {
+            if (dictionary == null)
+                throw new ArgumentNullException(nameof(dictionary));
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
+
+            if (value == null)
+                dictionary.Remove(key);
+            else
+                dictionary[key] = value;
+
+            return dictionary;
+        }
+
+        public static Dictionary<string, object> SetValue(this Dictionary<string, object> dictionary, string key, object? value, bool overwrite = true)
+        {
+            if (dictionary == null)
+                throw new ArgumentNullException(nameof(dictionary));
+            if (key == null)
+                throw new ArgumentNullException(nameof(key));
+
+            if (overwrite)
+            {
+                if (value == null)
+                    dictionary.Remove(key);
+                else
+                    dictionary[key] = value;
+            }
+            else if (!dictionary.ContainsKey(key) && value != null)
+                dictionary.Add(key, value);
+
+            return dictionary;
+        }
+
+        public static Dictionary<string, object> SetValues(this Dictionary<string, object> dictionary, IEnumerable<KeyValuePair<string, object?>>? properties,
+            bool overwrite = true)
+        {
+            if (properties != null)
+            {
+                foreach (KeyValuePair<string, object?> header in properties)
+                    SetValue(dictionary, header.Key, header.Value, overwrite);
+            }
+
+            return dictionary;
         }
     }
 }

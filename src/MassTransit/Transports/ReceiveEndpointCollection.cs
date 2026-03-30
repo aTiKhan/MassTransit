@@ -5,13 +5,11 @@
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
-    using Middleware;
     using Observables;
     using Util;
 
 
     public class ReceiveEndpointCollection :
-        Agent,
         IReceiveEndpointCollection
     {
         readonly SingleThreadedDictionary<string, ReceiveEndpoint> _endpoints;
@@ -36,9 +34,10 @@
                 ? EndpointHealthResult.Healthy(endpoint, "starting")
                 : EndpointHealthResult.Unhealthy(endpoint, "not ready", null);
 
-            var added = _endpoints.TryAdd(endpointName, key =>
+            var added = _endpoints.TryAdd(endpointName, _ =>
             {
                 endpoint.ConnectReceiveEndpointObserver(new HealthResultReceiveEndpointObserver(endpoint));
+                endpoint.ObserverHandle = endpoint.ConnectReceiveEndpointObserver(_receiveEndpointObservers);
 
                 return endpoint;
             });
@@ -94,54 +93,31 @@
             return new MultipleConnectHandle(_endpoints.Values.Select(x => x.ConnectConsumeMessageObserver(observer)));
         }
 
-        public BusHealthResult CheckHealth(BusState busState, string healthMessage)
+        public IEnumerable<EndpointHealthResult> CheckEndpointHealth()
         {
-            var results = _endpoints.Values.Select(x => new
-            {
-                x.InputAddress,
-                Result = x.HealthResult
-            }).ToArray();
-
-            var unhealthy = results.Where(x => x.Result.Status == BusHealthStatus.Unhealthy).ToArray();
-            var degraded = results.Where(x => x.Result.Status == BusHealthStatus.Degraded).ToArray();
-
-            var unhappy = unhealthy.Union(degraded).ToArray();
-
-            var names = unhappy.Select(x => x.InputAddress.AbsolutePath.Split('/').LastOrDefault()).ToArray();
-
-            Dictionary<string, EndpointHealthResult> data = results.ToDictionary(x => x.InputAddress.ToString(), x => x.Result);
-
-            var exception = results.Where(x => x.Result.Exception != null).Select(x => x.Result.Exception).FirstOrDefault();
-
-            if (busState != BusState.Started || unhealthy.Any() && unhappy.Length == results.Length)
-                return BusHealthResult.Unhealthy($"Not ready: {healthMessage}", exception, data);
-
-            if (unhappy.Any())
-                return BusHealthResult.Degraded($"Degraded Endpoints: {string.Join(",", names)}", exception, data);
-
-            return BusHealthResult.Healthy("Ready", data);
+            return _endpoints.Values.Select(x => x.HealthResult).ToList();
         }
 
-        protected override async Task StopAgent(StopContext context)
+        public async Task StopEndpoints(CancellationToken cancellationToken)
         {
-            ReceiveEndpoint[] endpoints = _endpoints.Values.Where(x => x.IsStarted()).ToArray();
+            ReceiveEndpoint[] endpoints = _endpoints.Values.Where(x => x.IsStarted() && !x.IsBusEndpoint).ToArray();
 
-            await Task.WhenAll(endpoints.Select(x => x.Stop(context.CancellationToken))).ConfigureAwait(false);
+            await Task.WhenAll(endpoints.Select(x => x.Stop(cancellationToken))).ConfigureAwait(false);
+
+            endpoints = _endpoints.Values.Where(x => x.IsStarted() && x.IsBusEndpoint).ToArray();
+
+            await Task.WhenAll(endpoints.Select(x => x.Stop(cancellationToken))).ConfigureAwait(false);
 
             _started = false;
-
-            await base.StopAgent(context).ConfigureAwait(false);
         }
 
         HostReceiveEndpointHandle StartEndpoint(string endpointName, ReceiveEndpoint endpoint, CancellationToken cancellationToken)
         {
             try
             {
-                var observerHandle = endpoint.ConnectReceiveEndpointObserver(_receiveEndpointObservers);
-
                 void RemoveEndpoint()
                 {
-                    observerHandle.Disconnect();
+                    endpoint.ObserverHandle.Disconnect();
                     Remove(endpointName);
                 }
 
@@ -184,13 +160,13 @@
 
             public IReceiveEndpoint ReceiveEndpoint => _endpoint;
 
-            Task<ReceiveEndpointReady> HostReceiveEndpointHandle.Ready => _endpointHandle.Ready;
+            public Task<ReceiveEndpointReady> Ready => _endpointHandle.Ready;
 
-            public async Task StopAsync(CancellationToken cancellationToken)
+            public Task StopAsync(CancellationToken cancellationToken)
             {
-                await _endpoint.Stop(true, cancellationToken).ConfigureAwait(false);
-
                 _remove();
+
+                return _endpoint.Stop(true, cancellationToken);
             }
 
             public void Start(CancellationToken cancellationToken)

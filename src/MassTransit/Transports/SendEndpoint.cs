@@ -8,7 +8,7 @@
 
 
     public class SendEndpoint :
-        ISendEndpoint,
+        ITransportSendEndpoint,
         IAsyncDisposable
     {
         readonly ConnectHandle _observerHandle;
@@ -34,17 +34,26 @@
         IMessageSerializer Serializer { get; }
         ISerialization Serialization { get; }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
             _observerHandle?.Disconnect();
 
-            if (_transport is IAsyncDisposable disposable)
-                await disposable.DisposeAsync().ConfigureAwait(false);
+            return _transport switch
+            {
+                IAsyncDisposable disposable => disposable.DisposeAsync(),
+                _ => default
+            };
         }
 
         public ConnectHandle ConnectSendObserver(ISendObserver observer)
         {
             return _transport.ConnectSendObserver(observer);
+        }
+
+        public Task<SendContext<T>> CreateSendContext<T>(T message, IPipe<SendContext<T>> pipe, CancellationToken cancellationToken)
+            where T : class
+        {
+            return _transport.CreateSendContext(message, new SendEndpointPipe<T>(this, pipe), cancellationToken);
         }
 
         public Task Send<T>(T message, CancellationToken cancellationToken)

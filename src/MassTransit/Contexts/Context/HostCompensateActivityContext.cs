@@ -1,8 +1,5 @@
 ﻿namespace MassTransit.Context
 {
-    using Courier;
-
-
     public class HostCompensateActivityContext<TActivity, TLog> :
         CompensateContextProxy<TLog>,
         CompensateActivityContext<TActivity, TLog>
@@ -18,5 +15,17 @@
         }
 
         TActivity CompensateActivityContext<TActivity, TLog>.Activity => _activity;
+
+        public void Method7()
+        {
+        }
+
+        public void Method8()
+        {
+        }
+
+        public void Method9()
+        {
+        }
     }
 }

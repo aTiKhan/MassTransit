@@ -2,7 +2,6 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
 {
     using System;
     using System.Threading.Tasks;
-    using Context;
     using NUnit.Framework;
 
 
@@ -15,12 +14,15 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
         {
             var transactionId = NewId.NextGuid();
 
-            await InputQueueSendEndpoint.Send<INewUserEvent>(new {TransactionId = transactionId});
+            await InputQueueSendEndpoint.Send<INewUserEvent>(new { TransactionId = transactionId });
 
             ConsumeContext<INewUserEvent> context = await _handled;
 
-            Assert.IsTrue(context.CorrelationId.HasValue);
-            Assert.That(context.CorrelationId.Value, Is.EqualTo(transactionId));
+            Assert.Multiple(() =>
+            {
+                Assert.That(context.CorrelationId.HasValue, Is.True);
+                Assert.That(context.CorrelationId.Value, Is.EqualTo(transactionId));
+            });
         }
 
         [Test]
@@ -28,12 +30,15 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
         {
             var transactionId = NewId.NextGuid();
 
-            await InputQueueSendEndpoint.Send<LegacyMessage>(new {TransactionId = transactionId});
+            await InputQueueSendEndpoint.Send<LegacyMessage>(new { TransactionId = transactionId });
 
             ConsumeContext<LegacyMessage> legacyContext = await _legacyHandled;
 
-            Assert.IsTrue(legacyContext.CorrelationId.HasValue);
-            Assert.That(legacyContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            Assert.Multiple(() =>
+            {
+                Assert.That(legacyContext.CorrelationId.HasValue, Is.True);
+                Assert.That(legacyContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            });
         }
 
         [Test]
@@ -41,12 +46,15 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
         {
             var transactionId = NewId.NextGuid();
 
-            await InputQueueSendEndpoint.Send<OtherMessage>(new {CorrelationId = transactionId});
+            await InputQueueSendEndpoint.Send<OtherMessage>(new { CorrelationId = transactionId });
 
             ConsumeContext<OtherMessage> otherContext = await _otherHandled;
 
-            Assert.IsTrue(otherContext.CorrelationId.HasValue);
-            Assert.That(otherContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            Assert.Multiple(() =>
+            {
+                Assert.That(otherContext.CorrelationId.HasValue, Is.True);
+                Assert.That(otherContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            });
         }
 
         Task<ConsumeContext<INewUserEvent>> _handled;
@@ -105,12 +113,15 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
         {
             var transactionId = NewId.NextGuid();
 
-            await Bus.Publish<PartitionedMessage>(new {CorrelationId = transactionId});
+            await Bus.Publish<PartitionedMessage>(new { CorrelationId = transactionId });
 
             ConsumeContext<PartitionedMessage> otherContext = await _otherHandled;
 
-            Assert.IsTrue(otherContext.CorrelationId.HasValue);
-            Assert.That(otherContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            Assert.Multiple(() =>
+            {
+                Assert.That(otherContext.CorrelationId.HasValue, Is.True);
+                Assert.That(otherContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            });
         }
 
         Task<ConsumeContext<PartitionedMessage>> _otherHandled;
@@ -156,12 +167,15 @@ namespace MassTransit.Azure.ServiceBus.Core.Tests
         {
             var transactionId = NewId.NextGuid();
 
-            await Bus.Publish<PartitionedMessage>(new {CorrelationId = transactionId});
+            await Bus.Publish<PartitionedMessage>(new { CorrelationId = transactionId });
 
             ConsumeContext<PartitionedMessage> otherContext = await _otherHandled;
 
-            Assert.IsTrue(otherContext.CorrelationId.HasValue);
-            Assert.That(otherContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            Assert.Multiple(() =>
+            {
+                Assert.That(otherContext.CorrelationId.HasValue, Is.True);
+                Assert.That(otherContext.CorrelationId.Value, Is.EqualTo(transactionId));
+            });
         }
 
         Task<ConsumeContext<PartitionedMessage>> _otherHandled;

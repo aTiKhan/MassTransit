@@ -2,122 +2,117 @@ namespace MassTransit.KafkaIntegration
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
+    using System.Threading;
     using System.Threading.Tasks;
     using Checkpoints;
     using Confluent.Kafka;
-    using MassTransit.Configuration;
     using Util;
 
 
-    public class ConsumerLockContext<TKey, TValue> :
-        IConsumerLockContext<TKey, TValue>
-        where TValue : class
+    public class ConsumerLockContext :
+        IConsumerLockContext,
+        KafkaConsumerBuilderContext
     {
-        readonly SingleThreadedDictionary<Partition, PartitionCheckpointData> _data = new SingleThreadedDictionary<Partition, PartitionCheckpointData>();
-        readonly IHostConfiguration _hostConfiguration;
+        readonly ConsumerContext _context;
+        readonly SingleThreadedDictionary<TopicPartition, PartitionCheckpointData> _data;
+        readonly PendingConfirmationCollection _pending;
         readonly ReceiveSettings _receiveSettings;
 
-        public ConsumerLockContext(IHostConfiguration hostConfiguration, ReceiveSettings receiveSettings)
+        public ConsumerLockContext(ConsumerContext context, ReceiveSettings receiveSettings, CancellationToken cancellationToken)
         {
-            _hostConfiguration = hostConfiguration;
+            _context = context;
             _receiveSettings = receiveSettings;
+            _pending = new PendingConfirmationCollection(cancellationToken);
+            _data = new SingleThreadedDictionary<TopicPartition, PartitionCheckpointData>();
         }
 
-        public async Task Pending(ConsumeResult<TKey, TValue> result)
+        public ValueTask DisposeAsync()
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
-
-            if (_data.TryGetValue(result.Partition, out var data))
-                await data.Pending(result).ConfigureAwait(false);
+            _pending.Dispose();
+            return default;
         }
 
-        public Task Complete(ConsumeResult<TKey, TValue> result)
+        public Task Pending(ConsumeResult<byte[], byte[]> result)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            if (_data.TryGetValue(result.Partition, out var data))
-                data.Complete(result);
+            return _data.TryGetValue(result.TopicPartition, out var data) ? data.Pending(result) : Task.CompletedTask;
+        }
+
+        public Task Complete(ConsumeResult<byte[], byte[]> result)
+        {
+            LogContext.SetCurrentIfNull(_context.LogContext);
+
+            _pending.Complete(result.TopicPartitionOffset);
 
             return Task.CompletedTask;
         }
 
-        public Task Faulted(ConsumeResult<TKey, TValue> result, Exception exception)
+        public void Canceled(ConsumeResult<byte[], byte[]> result, CancellationToken cancellationToken)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            if (_data.TryGetValue(result.Partition, out var data))
-                data.Faulted(result, exception);
+            _pending.Canceled(result.TopicPartitionOffset, cancellationToken);
+        }
+
+        public Task Faulted(ConsumeResult<byte[], byte[]> result, Exception exception)
+        {
+            LogContext.SetCurrentIfNull(_context.LogContext);
+
+            _pending.Faulted(result.TopicPartitionOffset, exception);
 
             return Task.CompletedTask;
         }
 
-        public void OnAssigned(IConsumer<TKey, TValue> consumer, IEnumerable<TopicPartition> partitions)
+        public IEnumerable<TopicPartitionOffset> OnAssigned(IConsumer<byte[], byte[]> consumer, IEnumerable<TopicPartition> partitions)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
             foreach (var partition in partitions)
             {
-                if (_data.TryAdd(partition.Partition, p => new PartitionCheckpointData(partition, consumer, _receiveSettings)))
-                    LogContext.Info?.Log("Partition: {PartitionId} was assigned", partition);
+                if (!_data.TryAdd(partition, p => new PartitionCheckpointData(consumer, _receiveSettings, _pending)))
+                    continue;
+
+                LogContext.Debug?.Log("Partition: {PartitionId} with {Offset} was assigned to: {MemberId}", partition, _receiveSettings.Offset,
+                    consumer.MemberId);
+
+                yield return new TopicPartitionOffset(partition, _receiveSettings.Offset);
             }
         }
 
-        public void OnUnAssigned(IConsumer<TKey, TValue> consumer, IEnumerable<TopicPartitionOffset> partitions)
+        public IEnumerable<TopicPartitionOffset> OnPartitionLost(IConsumer<byte[], byte[]> consumer, IEnumerable<TopicPartitionOffset> partitions)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            var tasks = new List<Task>();
-            foreach (var partition in partitions)
+            Task LostAndDelete(TopicPartitionOffset topicPartition)
             {
-                if (_data.TryRemove(partition.Partition, out var data))
-                    tasks.Add(data.Close(partition));
+                if (!_data.TryRemove(topicPartition.TopicPartition, out var data))
+                    return Task.CompletedTask;
+
+                LogContext.Debug?.Log("Partition: {PartitionId} was lost on {MemberId}", topicPartition.TopicPartition, consumer.MemberId);
+                return data.Lost();
             }
 
-            async Task Close()
-            {
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
-
-            TaskUtil.Await(Close);
+            TaskUtil.Await(Task.WhenAll(partitions.Select(partition => LostAndDelete(partition))));
+            return [];
         }
 
-
-        sealed class PartitionCheckpointData
+        public IEnumerable<TopicPartitionOffset> OnUnAssigned(IConsumer<byte[], byte[]> consumer, IEnumerable<TopicPartitionOffset> partitions)
         {
-            readonly ICheckpointer _checkpointer;
-            readonly ChannelExecutor _executor;
-            readonly PendingConfirmationCollection _pending;
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            public PartitionCheckpointData(TopicPartition partition, IConsumer<TKey, TValue> consumer, ReceiveSettings settings)
+            Task CloseAndDelete(TopicPartitionOffset topicPartition)
             {
-                _pending = new PendingConfirmationCollection(partition);
-                _executor = new ChannelExecutor(1);
-                _checkpointer = new BatchCheckpointer<TKey, TValue>(_executor, consumer, settings);
+                if (!_data.TryRemove(topicPartition.TopicPartition, out var data))
+                    return Task.CompletedTask;
+
+                LogContext.Debug?.Log("Partition: {PartitionId} was closed on {MemberId}", topicPartition.TopicPartition, consumer.MemberId);
+                return data.Close();
             }
 
-            public Task Pending(ConsumeResult<TKey, TValue> result)
-            {
-                var pendingConfirmation = _pending.Add(result.Offset);
-                return _checkpointer.Pending(pendingConfirmation);
-            }
-
-            public void Complete(ConsumeResult<TKey, TValue> result)
-            {
-                _pending.Complete(result.Offset);
-            }
-
-            public void Faulted(ConsumeResult<TKey, TValue> result, Exception exception)
-            {
-                _pending.Faulted(result.Offset, exception);
-            }
-
-            public async Task Close(TopicPartitionOffset partition)
-            {
-                await _checkpointer.DisposeAsync().ConfigureAwait(false);
-                await _executor.DisposeAsync().ConfigureAwait(false);
-
-                LogContext.Info?.Log("Partition: {PartitionId} was closed", partition.TopicPartition);
-            }
+            TaskUtil.Await(Task.WhenAll(partitions.Select(partition => CloseAndDelete(partition))));
+            return [];
         }
     }
 }

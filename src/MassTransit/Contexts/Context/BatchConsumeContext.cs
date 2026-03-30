@@ -20,7 +20,7 @@ namespace MassTransit.Context
 
         public override Task NotifyConsumed<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType)
         {
-            return Task.CompletedTask;
+            return _context.NotifyConsumed(context, duration, consumerType);
         }
 
         public override Task NotifyFaulted<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType, Exception exception)
@@ -37,7 +37,19 @@ namespace MassTransit.Context
 
         public Task NotifyFaulted(TimeSpan duration, string consumerType, Exception exception)
         {
-            return _context.NotifyFaulted(this, duration, consumerType, exception);
+            return Task.CompletedTask;
+        }
+
+        public void Method4()
+        {
+        }
+
+        public void Method5()
+        {
+        }
+
+        public void Method6()
+        {
         }
     }
 }

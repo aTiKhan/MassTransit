@@ -11,28 +11,31 @@ namespace MassTransitBenchmark.Latency
     {
         readonly IMessageLatencySettings _settings;
         IMediator _mediator;
-        Task<ISendEndpoint> _targetEndpoint;
 
         public MediatorMessageLatencyTransport(IMessageLatencySettings settings)
         {
             _settings = settings;
         }
 
-        public Task<ISendEndpoint> TargetEndpoint => _targetEndpoint;
+        public Task Send(LatencyTestMessage message)
+        {
+            return _mediator.Send(message);
+        }
 
-        public Task Start(Action<IReceiveEndpointConfigurator> callback)
+        public Task Start(Action<IReceiveEndpointConfigurator> callback, IReportConsumerMetric reportConsumerMetric)
         {
             _mediator = Bus.Factory.CreateMediator(callback);
-
-            _targetEndpoint = Task.FromResult<ISendEndpoint>(_mediator);
 
             return Task.CompletedTask;
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            if (_mediator is IAsyncDisposable asyncDisposable)
-                await asyncDisposable.DisposeAsync();
+            return _mediator switch
+            {
+                IAsyncDisposable disposable => disposable.DisposeAsync(),
+                _ => default
+            };
         }
     }
 }

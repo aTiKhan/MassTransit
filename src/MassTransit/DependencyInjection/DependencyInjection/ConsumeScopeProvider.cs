@@ -10,8 +10,13 @@ namespace MassTransit.DependencyInjection
         BaseConsumeScopeProvider,
         IConsumeScopeProvider
     {
-        public ConsumeScopeProvider(IServiceProvider serviceProvider)
-            : base(serviceProvider)
+        public ConsumeScopeProvider(IRegistrationContext context)
+            : base(context)
+        {
+        }
+
+        public ConsumeScopeProvider(IServiceProvider serviceProvider, ISetScopedConsumeContext setScopedConsumeContext)
+            : base(serviceProvider, setScopedConsumeContext)
         {
         }
 
@@ -38,41 +43,41 @@ namespace MassTransit.DependencyInjection
             return GetScopeContext(context, ExistingScopeContextFactory<TConsumer, T>, CreatedScopeContextFactory<TConsumer, T>, PipeContextFactory);
         }
 
-        static ConsumeContext PipeContextFactory(ConsumeContext consumeContext, IServiceScope serviceScope, IScopeServiceProvider scopeServiceProvider)
+        static ConsumeContext PipeContextFactory(ConsumeContext consumeContext, IServiceScope serviceScope, IServiceProvider serviceProvider)
         {
-            return new ConsumeContextScope(consumeContext, serviceScope, serviceScope.ServiceProvider, scopeServiceProvider);
+            return new ConsumeContextScope(consumeContext, serviceScope, serviceScope.ServiceProvider, serviceProvider);
         }
 
-        static IConsumeScopeContext ExistingScopeContextFactory(ConsumeContext consumeContext, IServiceScope serviceScope)
+        static IConsumeScopeContext ExistingScopeContextFactory(ConsumeContext consumeContext, IServiceScope serviceScope, IDisposable disposable)
         {
-            return new ExistingConsumeScopeContext(consumeContext);
+            return new ExistingConsumeScopeContext(consumeContext, disposable);
         }
 
-        static IConsumeScopeContext CreatedScopeContextFactory(ConsumeContext consumeContext, IServiceScope serviceScope)
+        static IConsumeScopeContext CreatedScopeContextFactory(ConsumeContext consumeContext, IServiceScope serviceScope, IDisposable disposable)
         {
-            return new CreatedConsumeScopeContext(serviceScope, consumeContext);
+            return new CreatedConsumeScopeContext(serviceScope, consumeContext, disposable);
         }
 
-        static ConsumeContext<T> PipeContextFactory<T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope, IScopeServiceProvider scopeServiceProvider)
+        static ConsumeContext<T> PipeContextFactory<T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope, IServiceProvider serviceProvider)
             where T : class
         {
-            return new ConsumeContextScope<T>(consumeContext, serviceScope, serviceScope.ServiceProvider, scopeServiceProvider);
+            return new ConsumeContextScope<T>(consumeContext, serviceScope, serviceScope.ServiceProvider, serviceProvider);
         }
 
-        static IConsumeScopeContext<T> ExistingScopeContextFactory<T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope)
+        IConsumeScopeContext<T> ExistingScopeContextFactory<T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope, IDisposable disposable)
             where T : class
         {
-            return new ExistingConsumeScopeContext<T>(consumeContext, serviceScope);
+            return new ExistingConsumeScopeContext<T>(consumeContext, serviceScope, disposable, SetScopedConsumeContext);
         }
 
-        static IConsumeScopeContext<T> CreatedScopeContextFactory<T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope)
+        IConsumeScopeContext<T> CreatedScopeContextFactory<T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope, IDisposable disposable)
             where T : class
         {
-            return new CreatedConsumeScopeContext<T>(serviceScope, consumeContext);
+            return new CreatedConsumeScopeContext<T>(serviceScope, consumeContext, disposable, SetScopedConsumeContext);
         }
 
         static IConsumerConsumeScopeContext<TConsumer, T> ExistingScopeContextFactory<TConsumer, T>(ConsumeContext<T> consumeContext,
-            IServiceScope serviceScope)
+            IServiceScope serviceScope, IDisposable disposable)
             where T : class
             where TConsumer : class
         {
@@ -82,10 +87,11 @@ namespace MassTransit.DependencyInjection
 
             var consumerContext = new ConsumerConsumeContextScope<TConsumer, T>(consumeContext, consumer);
 
-            return new ExistingConsumerConsumeScopeContext<TConsumer, T>(consumerContext);
+            return new ExistingConsumerConsumeScopeContext<TConsumer, T>(consumerContext, disposable);
         }
 
-        static IConsumerConsumeScopeContext<TConsumer, T> CreatedScopeContextFactory<TConsumer, T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope)
+        static IConsumerConsumeScopeContext<TConsumer, T> CreatedScopeContextFactory<TConsumer, T>(ConsumeContext<T> consumeContext, IServiceScope serviceScope,
+            IDisposable disposable)
             where T : class
             where TConsumer : class
         {
@@ -95,7 +101,7 @@ namespace MassTransit.DependencyInjection
 
             var consumerContext = new ConsumerConsumeContextScope<TConsumer, T>(consumeContext, consumer);
 
-            return new CreatedConsumerConsumeScopeContext<TConsumer, T>(serviceScope, consumerContext);
+            return new CreatedConsumerConsumeScopeContext<TConsumer, T>(serviceScope, consumerContext, disposable);
         }
     }
 }

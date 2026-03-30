@@ -7,7 +7,6 @@ namespace MassTransit.RabbitMqTransport
     using MassTransit.Middleware;
     using RabbitMQ.Client;
     using Transports;
-    using Util;
 
 
     public class RabbitMqConnectionContext :
@@ -15,8 +14,6 @@ namespace MassTransit.RabbitMqTransport
         ConnectionContext,
         IAsyncDisposable
     {
-        readonly ChannelExecutor _executor;
-
         public RabbitMqConnectionContext(IConnection connection, IRabbitMqHostConfiguration hostConfiguration, string description,
             CancellationToken cancellationToken)
             : base(cancellationToken)
@@ -33,10 +30,6 @@ namespace MassTransit.RabbitMqTransport
             Topology = hostConfiguration.Topology;
 
             StopTimeout = TimeSpan.FromSeconds(30);
-
-            _executor = new ChannelExecutor(1);
-
-            connection.ConnectionShutdown += OnConnectionShutdown;
         }
 
         public IConnection Connection { get; }
@@ -52,36 +45,31 @@ namespace MassTransit.RabbitMqTransport
 
         public IRabbitMqBusTopology Topology { get; }
 
-        public async Task<IModel> CreateModel(CancellationToken cancellationToken)
+        public async Task<IChannel> CreateChannel(ushort? concurrentMessageLimit, CancellationToken cancellationToken)
         {
-            using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken, cancellationToken);
+            var options = new CreateChannelOptions(PublisherConfirmation, PublisherConfirmation, consumerDispatchConcurrency: concurrentMessageLimit);
 
-            return await _executor.Run(() => Connection.CreateModel(), tokenSource.Token).ConfigureAwait(false);
+            var channel = await Connection.CreateChannelAsync(options, cancellationToken).ConfigureAwait(false);
+
+            channel.ContinuationTimeout = ContinuationTimeout;
+
+            return channel;
         }
 
-        public async Task<ModelContext> CreateModelContext(CancellationToken cancellationToken)
+        public async Task<ChannelContext> CreateChannelContext(IAgent agent, ushort? concurrentMessageLimit, CancellationToken cancellationToken)
         {
-            var model = await CreateModel(cancellationToken).ConfigureAwait(false);
+            var channel = await CreateChannel(concurrentMessageLimit, cancellationToken).ConfigureAwait(false);
 
-            return new RabbitMqModelContext(this, model, cancellationToken);
+            return new RabbitMqChannelContext(this, channel, agent, cancellationToken);
         }
 
         public async ValueTask DisposeAsync()
         {
-            Connection.ConnectionShutdown -= OnConnectionShutdown;
-
             TransportLogMessages.DisconnectHost(Description);
 
-            Connection.Cleanup(200, "Connection Disposed");
+            await Connection.Cleanup(200, "Connection Disposed").ConfigureAwait(false);
 
             TransportLogMessages.DisconnectedHost(Description);
-
-            await _executor.DisposeAsync().ConfigureAwait(false);
-        }
-
-        void OnConnectionShutdown(object connection, ShutdownEventArgs reason)
-        {
-            Connection.Cleanup(reason.ReplyCode, reason.ReplyText);
         }
     }
 }

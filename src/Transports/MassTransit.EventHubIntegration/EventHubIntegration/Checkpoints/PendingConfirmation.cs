@@ -11,27 +11,26 @@ namespace MassTransit.EventHubIntegration.Checkpoints
     public class PendingConfirmation :
         IPendingConfirmation
     {
-        readonly string _eventHubName;
-        readonly TaskCompletionSource<long> _source;
+        readonly TaskCompletionSource<string> _source;
         ProcessEventArgs _eventArgs;
 
-        public PendingConfirmation(string eventHubName, ProcessEventArgs eventArgs)
+        public PendingConfirmation(ProcessEventArgs eventArgs)
         {
-            _eventHubName = eventHubName;
             _eventArgs = eventArgs;
-            _source = TaskUtil.GetTask<long>();
+            _source = TaskUtil.GetTask<string>();
         }
 
-        Uri Topic => new Uri($"topic:{_eventHubName}");
+        Uri Topic => new Uri($"topic:{Partition.EventHubName}");
 
         public PartitionContext Partition => _eventArgs.Partition;
-        public long Offset => _eventArgs.Data.Offset;
+
+        public string OffsetString => _eventArgs.Data.OffsetString;
 
         public Task Confirmed => _source.Task;
 
         public void Complete()
         {
-            _source.TrySetResult(Offset);
+            _source.TrySetResult(OffsetString);
         }
 
         public void Faulted(Exception exception)
@@ -44,7 +43,12 @@ namespace MassTransit.EventHubIntegration.Checkpoints
             _source.TrySetException(new ArgumentException(message));
         }
 
-        public Task Checkpoint(CancellationToken cancellationToken = default)
+        public void Canceled(CancellationToken cancellationToken)
+        {
+            _source.TrySetCanceled(cancellationToken);
+        }
+
+        public Task Checkpoint(CancellationToken cancellationToken)
         {
             return _eventArgs.UpdateCheckpointAsync(cancellationToken);
         }

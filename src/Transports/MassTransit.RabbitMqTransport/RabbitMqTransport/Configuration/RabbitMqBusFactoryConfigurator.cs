@@ -23,9 +23,10 @@ namespace MassTransit.RabbitMqTransport.Configuration
 
             var queueName = busConfiguration.Topology.Consume.CreateTemporaryQueueName("bus");
             var exchangeType = busConfiguration.BusEndpointConfiguration.Topology.Consume.ExchangeTypeSelector.DefaultExchangeType;
-            _settings = new RabbitMqReceiveSettings(busConfiguration.BusEndpointConfiguration, queueName, exchangeType, false, true);
-
-            _settings.AutoDeleteAfter(TimeSpan.FromMinutes(1));
+            _settings = new RabbitMqReceiveSettings(busConfiguration.BusEndpointConfiguration, queueName, exchangeType, false, true)
+            {
+                QueueExpiration = TimeSpan.FromMinutes(1)
+            };
         }
 
         public IReceiveEndpointConfiguration CreateBusEndpointConfiguration(Action<IReceiveEndpointConfigurator> configure)
@@ -127,18 +128,27 @@ namespace MassTransit.RabbitMqTransport.Configuration
             _busConfiguration.HostConfiguration.Settings = settings;
         }
 
-        void IRabbitMqBusFactoryConfigurator.Send<T>(Action<IRabbitMqMessageSendTopologyConfigurator<T>> configureTopology)
+        public void Send<T>(Action<IRabbitMqMessageSendTopologyConfigurator<T>>? configureTopology)
+            where T : class
         {
             IRabbitMqMessageSendTopologyConfigurator<T> configurator = _busConfiguration.Topology.Send.GetMessageTopology<T>();
 
             configureTopology?.Invoke(configurator);
         }
 
-        void IRabbitMqBusFactoryConfigurator.Publish<T>(Action<IRabbitMqMessagePublishTopologyConfigurator<T>> configureTopology)
+        public void Publish<T>(Action<IRabbitMqMessagePublishTopologyConfigurator<T>>? configureTopology)
+            where T : class
         {
-            IRabbitMqMessagePublishTopologyConfigurator<T> configurator = _busConfiguration.Topology.Publish.GetMessageTopology<T>();
+            IRabbitMqMessagePublishTopologyConfigurator<T>? configurator = _busConfiguration.Topology.Publish.GetMessageTopology<T>();
 
             configureTopology?.Invoke(configurator);
+        }
+
+        public void Publish(Type messageType, Action<IRabbitMqMessagePublishTopologyConfigurator>? configure = null)
+        {
+            var configurator = _busConfiguration.Topology.Publish.GetMessageTopology(messageType);
+
+            configure?.Invoke(configurator);
         }
 
         public new IRabbitMqSendTopologyConfigurator SendTopology => _busConfiguration.Topology.Send;

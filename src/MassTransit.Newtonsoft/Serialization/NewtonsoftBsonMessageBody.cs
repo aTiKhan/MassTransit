@@ -35,7 +35,7 @@ namespace MassTransit.Serialization
 
             try
             {
-                var envelope = _envelope ??= new JsonMessageEnvelope(_context, _context.Message, MessageTypeCache<TMessage>.MessageTypeNames);
+                var envelope = _envelope ??= new JsonMessageEnvelope(_context, _context.Message);
 
                 using var stream = new MemoryStream();
                 using var jsonWriter = new BsonDataWriter(stream);
@@ -60,7 +60,7 @@ namespace MassTransit.Serialization
 
         public string GetString()
         {
-            throw new SerializationException("Unable to serialize message, binary cannot be converted to string.");
+            return Convert.ToBase64String(GetBytes());
         }
     }
 }

@@ -44,10 +44,16 @@
                 sendContext.ReplyToSessionId = sessionId;
         }
 
-        public static void SetPartitionKey(this SendContext context, string partitionKey)
+        public static void SetReplyTo(this SendContext context, string replyTo)
         {
             if (context.TryGetPayload(out ServiceBusSendContext sendContext))
-                sendContext.PartitionKey = partitionKey;
+                sendContext.ReplyTo = replyTo;
+        }
+
+        public static void SetLabel(this SendContext context, string label)
+        {
+            if (context.TryGetPayload(out ServiceBusSendContext sendContext))
+                sendContext.Label = label;
         }
     }
 }

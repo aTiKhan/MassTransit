@@ -44,7 +44,9 @@ namespace MassTransit.Azure.Table.Tests.Saga
                     TestKey = "Unique"
                 });
 
-                await updated;
+                ConsumeContext<TestUpdated> consumeContext = await updated;
+
+                Assert.That(consumeContext.Message.TestState, Is.EqualTo(TestEnum.Initialized));
             }
 
             protected void ConfigureRegistration(IBusRegistrationConfigurator configurator)
@@ -71,7 +73,15 @@ namespace MassTransit.Azure.Table.Tests.Saga
         {
             public string CurrentState { get; set; }
             public string Key { get; set; }
+            public TestEnum TestState { get; set; }
             public Guid CorrelationId { get; set; }
+        }
+
+
+        public enum TestEnum
+        {
+            Default = 0,
+            Initialized,
         }
 
 
@@ -86,7 +96,11 @@ namespace MassTransit.Azure.Table.Tests.Saga
 
                 Initially(
                     When(Started)
-                        .Then(context => context.Instance.Key = context.Data.TestKey)
+                        .Then(context =>
+                        {
+                            context.Instance.Key = context.Data.TestKey;
+                            context.Instance.TestState = TestEnum.Initialized;
+                        })
                         .Activity(x => x.OfInstanceType<PublishTestStartedActivity>())
                         .TransitionTo(Active));
 
@@ -95,7 +109,8 @@ namespace MassTransit.Azure.Table.Tests.Saga
                         .Publish(context => new TestUpdated
                         {
                             CorrelationId = context.Instance.CorrelationId,
-                            TestKey = context.Instance.Key
+                            TestKey = context.Instance.Key,
+                            TestState = context.Instance.TestState,
                         })
                         .TransitionTo(Done)
                         .Finalize());
@@ -115,6 +130,16 @@ namespace MassTransit.Azure.Table.Tests.Saga
         {
             public Guid TestId { get; set; }
             public string TestKey { get; set; }
+        }
+
+
+        public class TestUpdated :
+            CorrelatedBy<Guid>
+        {
+            public string TestKey { get; set; }
+            public TestEnum TestState { get; set; }
+
+            public Guid CorrelationId { get; set; }
         }
 
 

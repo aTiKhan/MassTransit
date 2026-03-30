@@ -2,6 +2,7 @@
 {
     using System;
     using System.Linq;
+    using System.Threading;
     using System.Threading.Tasks;
     using Courier;
     using Courier.Contracts;
@@ -29,26 +30,38 @@
             return routingSlip.CompensateLogs.Select(x => x.Address).Last();
         }
 
-        public static async Task Execute<T>(this T source, RoutingSlip routingSlip)
+        public static Task Execute<T>(this T source, RoutingSlip routingSlip)
             where T : IPublishEndpoint, ISendEndpointProvider
         {
-            if (routingSlip.RanToCompletion())
-            {
-                var timestamp = DateTime.UtcNow;
-                var duration = timestamp - routingSlip.CreateTimestamp;
+            return new RoutingSlipExecutor(source, source).Execute(routingSlip, CancellationToken.None);
+        }
 
-                IRoutingSlipEventPublisher publisher = new RoutingSlipEventPublisher(source, source, routingSlip);
+        public static Task Execute<T>(this T source, RoutingSlip routingSlip, CancellationToken cancellationToken)
+            where T : IPublishEndpoint, ISendEndpointProvider
+        {
+            return new RoutingSlipExecutor(source, source).Execute(routingSlip, cancellationToken);
+        }
 
-                await publisher.PublishRoutingSlipCompleted(timestamp, duration, routingSlip.Variables).ConfigureAwait(false);
-            }
-            else
-            {
-                var address = routingSlip.GetNextExecuteAddress() ?? throw new RoutingSlipException("Activity execute address was not specified.");
+        /// <summary>
+        /// Execute a routing slip via the <paramref name="sendEndpointProvider"/> and/or <paramref name="publishEndpoint"/> provided.
+        /// This method works with the bus outbox (from the transactional outbox).
+        /// </summary>
+        /// <param name="routingSlip"></param>
+        /// <param name="sendEndpointProvider"></param>
+        /// <param name="publishEndpoint"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        public static Task Execute(this RoutingSlip routingSlip, ISendEndpointProvider sendEndpointProvider, IPublishEndpoint publishEndpoint,
+            CancellationToken cancellationToken = default)
+        {
+            if (routingSlip == null)
+                throw new ArgumentNullException(nameof(routingSlip));
+            if (sendEndpointProvider == null)
+                throw new ArgumentNullException(nameof(sendEndpointProvider));
+            if (publishEndpoint == null)
+                throw new ArgumentNullException(nameof(publishEndpoint));
 
-                var endpoint = await source.GetSendEndpoint(address).ConfigureAwait(false);
-
-                await endpoint.Send(routingSlip).ConfigureAwait(false);
-            }
+            return new RoutingSlipExecutor(sendEndpointProvider, publishEndpoint).Execute(routingSlip, cancellationToken);
         }
     }
 }

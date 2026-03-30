@@ -8,10 +8,11 @@
         /// <summary>
         /// Specify the number of concurrent consumers (separate from prefetch count)
         /// </summary>
+        [Obsolete("Set ConcurrentMessageLimit instead (which is exactly what setting this property does)")]
         int MaxConcurrentCalls { set; }
 
         /// <summary>
-        /// True if the queue should be deleted if idle
+        /// If specified, the queue/subscription will be automatically removed after no consumer activity within the specific idle period
         /// </summary>
         TimeSpan AutoDeleteOnIdle { set; }
 
@@ -42,7 +43,7 @@
         TimeSpan LockDuration { set; }
 
         /// <summary>
-        /// Sets the maximum delivery count. A message is automatically deadlettered after this number of deliveries.
+        /// Sets the maximum delivery count. A message is automatically dead-lettered after this number of deliveries.
         /// </summary>
         int MaxDeliveryCount { set; }
 
@@ -52,29 +53,28 @@
         bool RequiresSession { set; }
 
         /// <summary>
+        /// If session is required, sets the maximum concurrent sessions (defaults to 1)
+        /// </summary>
+        int MaxConcurrentSessions { set; }
+
+        /// <summary>
+        /// If session is required, sets the maximum concurrent calls per session (defaults to 1)
+        /// </summary>
+        int MaxConcurrentCallsPerSession { set; }
+
+        /// <summary>
         /// Sets the user metadata.
         /// </summary>
         string UserMetadata { set; }
 
         /// <summary>
-        /// Sets the message session timeout period
-        /// </summary>
-        [Obsolete("use SessionIdleTimeout, which this method calls through to for now")]
-        TimeSpan MessageWaitTimeout { set; }
-
-        /// <summary>
         /// Sets the message session idle timeout period
         /// </summary>
-        TimeSpan SessionIdleTimeout { set; }
+        TimeSpan? SessionIdleTimeout { set; }
 
         /// <summary>
         /// Sets the maximum time for locks/sessions to be automatically renewed
         /// </summary>
         TimeSpan MaxAutoRenewDuration { set; }
-
-        /// <summary>
-        /// IF using the Basic Tier of Service Bus, this resets some values to avoid failing
-        /// </summary>
-        void SelectBasicTier();
     }
 }

@@ -8,7 +8,6 @@ namespace MassTransit.RabbitMqTransport
     using Configuration;
     using Metadata;
     using RabbitMQ.Client;
-    using Topology;
 
 
     public static class RabbitMqAddressExtensions
@@ -18,7 +17,7 @@ namespace MassTransit.RabbitMqTransport
             var hostAddress = new RabbitMqHostAddress(address);
             var endpointAddress = new RabbitMqEndpointAddress(hostAddress, address);
 
-            var topologyConfiguration = new RabbitMqTopologyConfiguration(RabbitMqBusFactory.MessageTopology);
+            var topologyConfiguration = new RabbitMqTopologyConfiguration(RabbitMqBusFactory.CreateMessageTopology());
             var endpointConfiguration = new RabbitMqEndpointConfiguration(topologyConfiguration);
             var settings = new RabbitMqReceiveSettings(endpointConfiguration, endpointAddress.Name, endpointAddress.ExchangeType,
                 endpointAddress.Durable, endpointAddress.AutoDelete)
@@ -46,10 +45,17 @@ namespace MassTransit.RabbitMqTransport
                 HostName = settings.Host,
                 Port = settings.Port,
                 VirtualHost = settings.VirtualHost ?? "/",
-                RequestedHeartbeat = settings.Heartbeat,
+                RequestedHeartbeat = settings.Heartbeat == TimeSpan.Zero ? ConnectionFactory.DefaultHeartbeat : settings.Heartbeat,
                 RequestedConnectionTimeout = settings.RequestedConnectionTimeout,
-                RequestedChannelMax = settings.RequestedChannelMax
+                RequestedChannelMax = settings.RequestedChannelMax,
+                ContinuationTimeout = settings.ContinuationTimeout,
+                HandshakeContinuationTimeout = settings.ContinuationTimeout
             };
+
+            if (settings.MaxMessageSize.HasValue)
+                factory.MaxInboundMessageBodySize = settings.MaxMessageSize.Value;
+            if (settings.RequestedFrameMax.HasValue)
+                factory.RequestedFrameMax = settings.RequestedFrameMax.Value;
 
             if (settings.EndpointResolver != null)
             {
@@ -59,11 +65,12 @@ namespace MassTransit.RabbitMqTransport
 
             if (settings.UseClientCertificateAsAuthenticationIdentity)
             {
-                factory.AuthMechanisms.Clear();
-                factory.AuthMechanisms.Add(new ExternalMechanismFactory());
+                factory.AuthMechanisms = new List<IAuthMechanismFactory> { new ExternalMechanismFactory() };
                 factory.UserName = "";
                 factory.Password = "";
             }
+            else if (settings.CredentialsProvider != null)
+                factory.CredentialsProvider = settings.CredentialsProvider;
             else
             {
                 if (!string.IsNullOrWhiteSpace(settings.Username))
@@ -165,6 +172,11 @@ namespace MassTransit.RabbitMqTransport
         static string UriDecode(string uri)
         {
             return Uri.UnescapeDataString(uri.Replace("+", "%2B"));
+        }
+
+        public static bool IsReplyToAddress(this Uri address)
+        {
+            return address?.AbsolutePath?.EndsWith(RabbitMqExchangeNames.ReplyTo) ?? false;
         }
     }
 }

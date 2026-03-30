@@ -48,7 +48,7 @@ namespace MassTransit.DapperIntegration.Saga
 
         public async Task<SagaConsumeContext<TSaga, TMessage>> Load(Guid correlationId)
         {
-            var instance = await _context.LoadAsync<TSaga>(correlationId, CancellationToken).ConfigureAwait(false);
+            var instance = await _context.LoadAsync(correlationId, CancellationToken).ConfigureAwait(false);
             if (instance == default)
                 return default;
 
@@ -84,7 +84,8 @@ namespace MassTransit.DapperIntegration.Saga
 
     public class DapperSagaRepositoryContext<TSaga> :
         BasePipeContext,
-        SagaRepositoryContext<TSaga>
+        QuerySagaRepositoryContext<TSaga>,
+        LoadSagaRepositoryContext<TSaga>
         where TSaga : class, ISaga
     {
         readonly DatabaseContext<TSaga> _context;
@@ -95,16 +96,16 @@ namespace MassTransit.DapperIntegration.Saga
             _context = context;
         }
 
+        public Task<TSaga> Load(Guid correlationId)
+        {
+            return _context.LoadAsync(correlationId, CancellationToken);
+        }
+
         public async Task<SagaRepositoryQueryContext<TSaga>> Query(ISagaQuery<TSaga> query, CancellationToken cancellationToken = default)
         {
             IEnumerable<TSaga> instances = await _context.QueryAsync(query.FilterExpression, cancellationToken).ConfigureAwait(false);
 
             return new LoadedSagaRepositoryQueryContext<TSaga>(this, instances);
-        }
-
-        public Task<TSaga> Load(Guid correlationId)
-        {
-            return _context.LoadAsync<TSaga>(correlationId, CancellationToken);
         }
     }
 }

@@ -14,8 +14,9 @@
     {
         readonly Lazy<IConsumePipe> _consumePipe;
         readonly HashSet<IReceiveEndpointDependency> _dependencies;
-        readonly IList<string> _lateConfigurationKeys;
-        readonly IList<IReceiveEndpointSpecification> _specifications;
+        readonly HashSet<IReceiveEndpointDependent> _dependents;
+        readonly List<string> _lateConfigurationKeys;
+        readonly List<IReceiveEndpointSpecification> _specifications;
         IReceiveEndpoint _receiveEndpoint;
 
         protected ReceiveEndpointConfiguration(IHostConfiguration hostConfiguration, IEndpointConfiguration endpointConfiguration)
@@ -28,6 +29,7 @@
             _specifications = new List<IReceiveEndpointSpecification>();
             _lateConfigurationKeys = new List<string>();
             _dependencies = new HashSet<IReceiveEndpointDependency>();
+            _dependents = new HashSet<IReceiveEndpointDependent>();
 
             EndpointObservers = new ReceiveEndpointObservable();
             ReceiveObservers = new ReceiveObservable();
@@ -49,6 +51,11 @@
         public ConnectHandle ConnectReceiveEndpointObserver(IReceiveEndpointObserver observer)
         {
             return EndpointObservers.Connect(observer);
+        }
+
+        public void AddDependent(IReceiveEndpointDependent dependent)
+        {
+            _dependents.Add(dependent);
         }
 
         public override IEnumerable<ValidationResult> Validate()
@@ -88,7 +95,9 @@
 
         public abstract ReceiveEndpointContext CreateReceiveEndpointContext();
 
-        public Task Dependencies => Task.WhenAll(_dependencies.Select(x => x.Ready));
+        public Task DependenciesReady => Task.WhenAll(_dependencies.Select(x => x.Ready));
+
+        public Task DependentsCompleted => Task.WhenAll(_dependents.Select(x => x.Completed));
 
         public void ConfigureMessageTopology<T>(bool enabled = true)
             where T : class
@@ -96,10 +105,13 @@
             Topology.Consume.GetMessageTopology<T>().ConfigureConsumeTopology = enabled;
         }
 
-        public void AddDependency(IReceiveEndpointObserverConnector connector)
+        public void ConfigureMessageTopology(Type messageType, bool enabled = true)
         {
-            var dependency = new ReceiveEndpointDependency(connector);
+            Topology.Consume.GetMessageTopology(messageType).ConfigureConsumeTopology = enabled;
+        }
 
+        public void AddDependency(IReceiveEndpointDependency dependency)
+        {
             _dependencies.Add(dependency);
         }
 
@@ -128,48 +140,6 @@
         protected virtual bool IsAlreadyConfigured()
         {
             return false;
-        }
-
-
-        class ReceiveEndpointDependency :
-            IReceiveEndpointDependency,
-            IReceiveEndpointObserver
-        {
-            readonly ConnectHandle _handle;
-            readonly TaskCompletionSource<ReceiveEndpointReady> _ready;
-
-            public ReceiveEndpointDependency(IReceiveEndpointObserverConnector connector)
-            {
-                _ready = new TaskCompletionSource<ReceiveEndpointReady>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-                _handle = connector.ConnectReceiveEndpointObserver(this);
-            }
-
-            public Task Ready => _ready.Task;
-
-            Task IReceiveEndpointObserver.Ready(ReceiveEndpointReady ready)
-            {
-                _handle.Disconnect();
-
-                _ready.TrySetResult(ready);
-
-                return Task.CompletedTask;
-            }
-
-            Task IReceiveEndpointObserver.Stopping(ReceiveEndpointStopping stopping)
-            {
-                return Task.CompletedTask;
-            }
-
-            Task IReceiveEndpointObserver.Completed(ReceiveEndpointCompleted completed)
-            {
-                return Task.CompletedTask;
-            }
-
-            Task IReceiveEndpointObserver.Faulted(ReceiveEndpointFaulted faulted)
-            {
-                return Task.CompletedTask;
-            }
         }
     }
 }

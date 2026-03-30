@@ -3,6 +3,7 @@ namespace MassTransit.Serialization
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
 
 
@@ -26,8 +27,11 @@ namespace MassTransit.Serialization
         protected BaseSerializerContext(IObjectDeserializer deserializer, MessageContext context, string[] supportedMessageTypes)
         {
             _context = context;
-            SupportedMessageTypes = supportedMessageTypes;
             _deserializer = deserializer;
+
+            SupportedMessageTypes = supportedMessageTypes;
+
+            ObjectDeserializer.Current = deserializer;
         }
 
         public Guid? MessageId => _messageId ??= _context.MessageId;
@@ -58,10 +62,15 @@ namespace MassTransit.Serialization
             return _deserializer.DeserializeObject(value, defaultValue);
         }
 
+        public MessageBody SerializeObject(object? value)
+        {
+            return _deserializer.SerializeObject(value);
+        }
+
         public abstract bool TryGetMessage<T>(out T? message)
             where T : class;
 
-        public abstract bool TryGetMessage(Type messageType, out object? message);
+        public abstract bool TryGetMessage(Type messageType, [NotNullWhen(true)] out object? message);
 
         public abstract IMessageSerializer GetMessageSerializer();
 
@@ -77,6 +86,13 @@ namespace MassTransit.Serialization
             where T : class
         {
             var typeUrn = MessageUrn.ForTypeString<T>();
+
+            return SupportedMessageTypes.Any(x => typeUrn.Equals(x, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public virtual bool IsSupportedMessageType(Type messageType)
+        {
+            var typeUrn = MessageUrn.ForTypeString(messageType);
 
             return SupportedMessageTypes.Any(x => typeUrn.Equals(x, StringComparison.OrdinalIgnoreCase));
         }

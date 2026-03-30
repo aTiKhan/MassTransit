@@ -1,46 +1,35 @@
 ﻿namespace MassTransit.AzureServiceBusTransport
 {
     using System;
+    using System.Net.WebSockets;
     using System.Threading;
     using System.Threading.Tasks;
     using Azure.Messaging.ServiceBus;
-    using Internals;
     using Logging;
-    using MassTransit.Middleware;
     using Transports;
-    using Util;
 
 
     public class Receiver :
-        Agent,
+        ConsumerAgent<long>,
         IReceiver
     {
-        readonly ClientContext _context;
-        readonly TaskCompletionSource<bool> _deliveryComplete;
-        readonly IServiceBusMessageReceiver _messageReceiver;
+        readonly ClientContext _clientContext;
+        readonly ServiceBusReceiveEndpointContext _context;
 
-        public Receiver(ClientContext context, IServiceBusMessageReceiver messageReceiver)
+        public Receiver(ClientContext clientClientContext, ServiceBusReceiveEndpointContext context)
+            : base(context)
         {
+            _clientContext = clientClientContext;
             _context = context;
-            _messageReceiver = messageReceiver;
 
-            messageReceiver.ZeroActivity += HandleDeliveryComplete;
-
-            _deliveryComplete = TaskUtil.GetTask<bool>();
+            TrySetManualConsumeTask();
         }
 
-        public DeliveryMetrics GetDeliveryMetrics()
+        public virtual void Start()
         {
-            return _messageReceiver.GetMetrics();
-        }
+            _clientContext.OnMessageAsync(OnMessage, ExceptionHandler);
 
-        public virtual Task Start()
-        {
-            _context.OnMessageAsync(OnMessage, ExceptionHandler);
-
-            SetReady();
-
-            return _context.StartAsync();
+            SetReady(_clientContext.StartAsync());
         }
 
         protected async Task ExceptionHandler(ProcessErrorEventArgs args)
@@ -49,93 +38,153 @@
             {
                 MessageTimeToLiveExpiredException _ => false,
                 MessageLockExpiredException _ => false,
+
                 ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } => false,
+                ServiceBusException { Reason: ServiceBusFailureReason.SessionLockLost } => false,
+
                 ServiceBusException { Reason: ServiceBusFailureReason.ServiceCommunicationProblem } => true,
+                ServiceBusException { Reason: ServiceBusFailureReason.MessagingEntityNotFound } => true,
+                ServiceBusException { Reason: ServiceBusFailureReason.MessagingEntityDisabled } => false,
+
                 ServiceBusException { IsTransient: true } => false,
+
                 _ => true
             };
 
-            if (args.Exception is ServiceBusException { IsTransient: true, Reason: ServiceBusFailureReason.ServiceCommunicationProblem })
+            switch (args.Exception)
             {
-                LogContext.Debug?.Log(args.Exception,
-                    "Exception on Receiver {InputAddress} during {Action} ActiveDispatchCount({activeDispatch}) ErrorRequiresRecycle({requiresRecycle})",
-                    _context.InputAddress, args.ErrorSource, _messageReceiver.ActiveDispatchCount, requiresRecycle);
-            }
-            else if (args.Exception is ObjectDisposedException { ObjectName: "$cbs" })
-            {
-                // don't log this one
-            }
-            else if (args.Exception is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost })
-            {
-                // don't log this one
-            }
-            else if (!(args.Exception is OperationCanceledException))
-            {
-                EnabledLogger? logger = requiresRecycle ? LogContext.Error : LogContext.Warning;
+                case ServiceBusException { IsTransient: true, Reason: ServiceBusFailureReason.ServiceCommunicationProblem }:
+                    LogContext.Debug?.Log(args.Exception,
+                        "ServiceBusException on Receiver {InputAddress} during {Action} ActiveDispatchCount({activeDispatch}) ErrorRequiresRecycle({requiresRecycle})",
+                        _clientContext.InputAddress, args.ErrorSource, ActiveDispatchCount, requiresRecycle);
+                    break;
+                case WebSocketException exception:
+                    LogContext.Debug?.Log(exception,
+                        "WebSocketException on Receiver {InputAddress} code {Code} ActiveDispatchCount({activeDispatch}) ErrorRequiresRecycle({requiresRecycle})",
+                        _clientContext.InputAddress, exception.WebSocketErrorCode, ActiveDispatchCount, requiresRecycle);
+                    break;
+                case ObjectDisposedException { ObjectName: "$cbs" }:
+                case ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost }:
+                case ServiceBusException { Reason: ServiceBusFailureReason.SessionLockLost }:
+                case ServiceBusException { Reason: ServiceBusFailureReason.MessagingEntityDisabled }:
+                    // don't log those
+                    break;
+                default:
+                {
+                    if (!(args.Exception is OperationCanceledException) && !(args.Exception.InnerException is TimeoutException))
+                    {
+                        EnabledLogger? logger = requiresRecycle ? LogContext.Error : LogContext.Warning;
 
-                logger?.Log(args.Exception,
-                    "Exception on Receiver {InputAddress} during {Action} ActiveDispatchCount({activeDispatch}) ErrorRequiresRecycle({requiresRecycle})",
-                    _context.InputAddress, args.ErrorSource, _messageReceiver.ActiveDispatchCount, requiresRecycle);
+                        logger?.Log(args.Exception,
+                            "Exception on Receiver {InputAddress} during {Action} ActiveDispatchCount({activeDispatch}) ErrorRequiresRecycle({requiresRecycle})",
+                            _clientContext.InputAddress, args.ErrorSource, ActiveDispatchCount, requiresRecycle);
+                    }
+
+                    break;
+                }
             }
 
             if (requiresRecycle)
             {
-                if (_deliveryComplete.TrySetResult(false))
-                {
-                    await _context.NotifyFaulted(args.Exception, args.EntityPath).ConfigureAwait(false);
+                await _clientContext.NotifyFaulted(args.Exception, args.EntityPath).ConfigureAwait(false);
 
-                #pragma warning disable 4014
-                    Task.Run(() => this.Stop($"Receiver Exception: {args.Exception.Message}"));
-                #pragma warning restore 4014
-                }
+                TrySetConsumeException(args.Exception);
             }
         }
 
-        async Task HandleDeliveryComplete()
+        protected override async Task ActiveAndActualAgentsCompleted(StopContext context)
+        {
+            await _clientContext.ShutdownAsync().ConfigureAwait(false);
+
+            await base.ActiveAndActualAgentsCompleted(context).ConfigureAwait(false);
+
+            try
+            {
+                await _clientContext.CloseAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                LogContext.Warning?.Log(exception, "Failed to close the message receiver context: {InputAddress}", _clientContext.InputAddress);
+            }
+        }
+
+        async Task OnMessage(ProcessMessageEventArgs messageReceiver, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
         {
             if (IsStopping)
-                _deliveryComplete.TrySetResult(true);
-        }
+                return;
 
-        protected override async Task StopAgent(StopContext context)
-        {
-            await _context.ShutdownAsync().ConfigureAwait(false);
+            MessageLockContext lockContext = new ServiceBusMessageLockContext(messageReceiver, message, Stopped);
+            var context = new ServiceBusReceiveContext(message, _context, cancellationToken, lockContext, _clientContext);
 
-            SetCompleted(ActiveAndActualAgentsCompleted(context));
-
-            await Completed.ConfigureAwait(false);
-
-            await _context.CloseAsync().ConfigureAwait(false);
-
-            LogContext.Debug?.Log("Receiver stopped: {InputAddress}", _context.InputAddress);
-        }
-
-        async Task ActiveAndActualAgentsCompleted(StopContext context)
-        {
-            if (_messageReceiver.ActiveDispatchCount > 0)
+            CancellationTokenSource cancellationTokenSource = null;
+            CancellationTokenRegistration timeoutRegistration = default;
+            CancellationTokenRegistration registration = default;
+            if (cancellationToken.CanBeCanceled)
             {
-                try
+                void Callback()
                 {
-                    await _deliveryComplete.Task.OrCanceled(context.CancellationToken).ConfigureAwait(false);
+                    if (_context.ConsumerStopTimeout.HasValue)
+                    {
+                        cancellationTokenSource = new CancellationTokenSource(_context.ConsumerStopTimeout.Value);
+                        timeoutRegistration = cancellationTokenSource.Token.Register(context.Cancel);
+                    }
+                    else
+                        context.Cancel();
                 }
-                catch (OperationCanceledException)
-                {
-                    LogContext.Warning?.Log("Stop canceled waiting for message consumers to complete: {InputAddress}", _context.InputAddress);
-                }
+
+                registration = cancellationToken.Register(Callback);
+            }
+
+
+            try
+            {
+                await Dispatch(message, context, lockContext).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // do NOT let exceptions propagate to the Azure SDK
+            }
+            finally
+            {
+                timeoutRegistration.Dispose();
+                registration.Dispose();
+
+                cancellationTokenSource?.Dispose();
+
+                context.Dispose();
             }
         }
 
-        Task OnMessage(ProcessMessageEventArgs messageReceiver, ServiceBusReceivedMessage message, CancellationToken cancellationToken)
+        protected async Task Dispatch(ServiceBusReceivedMessage message, ServiceBusReceiveContext context, MessageLockContext lockContext)
         {
-            return _messageReceiver.Handle(message, cancellationToken, context => AddReceiveContextPayloads(context, messageReceiver, message));
-        }
+            try
+            {
+                await Dispatch(context.SequenceNumber, context, new ServiceBusReceiveLockContext(_context.InputAddress, lockContext, message))
+                    .ConfigureAwait(false);
+            }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.SessionLockLost)
+            {
+                LogContext.Error?.Log("Session Lock Lost: {InputAddress} {MessageId} {SequenceNumber} ({SessionId})", _context.InputAddress,
+                    message.MessageId, message.SequenceNumber, message.SessionId);
 
-        void AddReceiveContextPayloads(ReceiveContext receiveContext, ProcessMessageEventArgs receiverClient, ServiceBusReceivedMessage message)
-        {
-            MessageLockContext lockContext = new ServiceBusMessageLockContext(receiverClient, message);
+                throw;
+            }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            {
+                LogContext.Error?.Log("Message Lock Lost: {InputAddress} {MessageId} {SequenceNumber}", _context.InputAddress, message.MessageId,
+                    message.SequenceNumber);
 
-            receiveContext.GetOrAddPayload(() => lockContext);
-            receiveContext.GetOrAddPayload(() => _context);
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                context.LogTransportFaulted(exception);
+                throw;
+            }
         }
     }
 }

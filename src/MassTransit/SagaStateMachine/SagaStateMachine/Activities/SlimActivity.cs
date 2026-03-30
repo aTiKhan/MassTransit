@@ -1,5 +1,6 @@
 namespace MassTransit.SagaStateMachine
 {
+    using System;
     using System.Threading.Tasks;
 
 
@@ -10,7 +11,7 @@ namespace MassTransit.SagaStateMachine
     /// <typeparam name="TMessage"></typeparam>
     public class SlimActivity<TSaga, TMessage> :
         IStateMachineActivity<TSaga, TMessage>
-        where TSaga : class, ISaga
+        where TSaga : class, SagaStateMachineInstance
         where TMessage : class
     {
         readonly IStateMachineActivity<TSaga> _activity;
@@ -30,12 +31,13 @@ namespace MassTransit.SagaStateMachine
             _activity.Probe(context);
         }
 
-        Task IStateMachineActivity<TSaga, TMessage>.Execute(BehaviorContext<TSaga, TMessage> context, IBehavior<TSaga, TMessage> behavior)
+        public Task Execute(BehaviorContext<TSaga, TMessage> context, IBehavior<TSaga, TMessage> next)
         {
-            return _activity.Execute(context, new WidenBehavior<TSaga, TMessage>(behavior, context));
+            return _activity.Execute(context, next);
         }
 
-        Task IStateMachineActivity<TSaga, TMessage>.Faulted<TException>(BehaviorExceptionContext<TSaga, TMessage, TException> context, IBehavior<TSaga, TMessage> next)
+        public Task Faulted<TException>(BehaviorExceptionContext<TSaga, TMessage, TException> context, IBehavior<TSaga, TMessage> next)
+            where TException : Exception
         {
             return _activity.Faulted(context, next);
         }

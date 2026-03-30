@@ -1,12 +1,13 @@
 ﻿namespace MassTransit.Transports
 {
+    using System.Collections.Generic;
     using System.Threading;
+    using System.Threading.Tasks;
 
 
     public interface IReceiveEndpointCollection :
         IReceiveEndpointObserverConnector,
         IConsumeMessageObserverConnector,
-        IAgent,
         IProbeSite
     {
         /// <summary>
@@ -32,6 +33,13 @@
         /// <returns></returns>
         HostReceiveEndpointHandle Start(string endpointName, CancellationToken cancellationToken = default);
 
-        BusHealthResult CheckHealth(BusState busState, string healthMessage);
+        /// <summary>
+        /// Stop all receive endpoints
+        /// </summary>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        Task StopEndpoints(CancellationToken cancellationToken);
+
+        IEnumerable<EndpointHealthResult> CheckEndpointHealth();
     }
 }

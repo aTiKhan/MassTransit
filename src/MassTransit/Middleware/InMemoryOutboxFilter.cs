@@ -3,6 +3,7 @@ namespace MassTransit.Middleware
     using System;
     using System.Threading.Tasks;
     using InMemoryOutbox;
+    using Microsoft.Extensions.DependencyInjection;
 
 
     public class InMemoryOutboxFilter<TContext, TResult> :
@@ -12,9 +13,11 @@ namespace MassTransit.Middleware
     {
         readonly bool _concurrentMessageDelivery;
         readonly Func<TContext, TResult> _contextFactory;
+        readonly ISetScopedConsumeContext _setter;
 
-        public InMemoryOutboxFilter(Func<TContext, TResult> contextFactory, bool concurrentMessageDelivery)
+        public InMemoryOutboxFilter(ISetScopedConsumeContext setter, Func<TContext, TResult> contextFactory, bool concurrentMessageDelivery)
         {
+            _setter = setter;
             _contextFactory = contextFactory;
             _concurrentMessageDelivery = concurrentMessageDelivery;
         }
@@ -22,6 +25,10 @@ namespace MassTransit.Middleware
         public async Task Send(TContext context, IPipe<TContext> next)
         {
             var outboxContext = _contextFactory(context);
+
+            IDisposable pop = null;
+            if (context.TryGetPayload(out IServiceScope scope))
+                pop = _setter.PushContext(scope, outboxContext);
 
             try
             {
@@ -37,12 +44,28 @@ namespace MassTransit.Middleware
 
                 throw;
             }
+            finally
+            {
+                pop?.Dispose();
+            }
         }
 
         public void Probe(ProbeContext context)
         {
             var scope = context.CreateFilterScope("outbox");
             scope.Add("type", "in-memory");
+        }
+
+        public void Method1()
+        {
+        }
+
+        public void Method2()
+        {
+        }
+
+        public void Method3()
+        {
         }
     }
 }

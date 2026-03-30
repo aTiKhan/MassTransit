@@ -16,16 +16,17 @@ namespace MassTransit.Contracts.JobService
         /// <summary>
         /// The job, as an object dictionary
         /// </summary>
-        IDictionary<string, object> Job { get; }
-
-        /// <summary>
-        /// The result of the job
-        /// </summary>
-        IDictionary<string, object> Result { get; }
+        Dictionary<string, object> Job { get; }
 
         /// <summary>
         /// The JobTypeId, to ensure the proper job type is started
         /// </summary>
         Guid JobTypeId { get; }
+
+        Dictionary<string, object>? JobProperties { get; }
+
+        Dictionary<string, object>? InstanceProperties { get; }
+
+        Dictionary<string, object>? JobTypeProperties { get; }
     }
 }

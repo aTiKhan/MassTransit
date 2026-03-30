@@ -146,6 +146,117 @@
 
 
     [TestFixture]
+    public class Scheduling_a_message_using_quartz_with_partition_key :
+        AzureServiceBusTestFixture
+    {
+        [Test]
+        public async Task Should_get_the_message()
+        {
+            await InputQueueSendEndpoint.Send(new FirstMessage(), x => x.SetPartitionKey("2112"));
+
+            await _first;
+
+            ConsumeContext<SecondMessage> consumeContext = await _second;
+
+            Assert.That(consumeContext.PartitionKey(), Is.EqualTo("2112"));
+        }
+
+        TimeSpan _testOffset;
+
+        public Scheduling_a_message_using_quartz_with_partition_key()
+        {
+            _testOffset = TimeSpan.Zero;
+            AzureServiceBusTestHarness.ConfigureMessageScheduler = false;
+        }
+
+        Uri QuartzAddress { get; set; }
+
+        Task<ConsumeContext<SecondMessage>> _second;
+        Task<ConsumeContext<FirstMessage>> _first;
+
+        protected override void ConfigureServiceBusReceiveEndpoint(IServiceBusReceiveEndpointConfigurator configurator)
+        {
+            _first = Handler<FirstMessage>(configurator, async context =>
+            {
+                await context.ScheduleSend(DateTime.Now, new SecondMessage(),
+                    Pipe.Execute<SendContext>(x => x.SetPartitionKey(context.PartitionKey())));
+            });
+
+            _second = Handled<SecondMessage>(configurator);
+        }
+
+        protected override void ConfigureServiceBusBus(IServiceBusBusFactoryConfigurator configurator)
+        {
+            QuartzAddress = configurator.UseInMemoryScheduler();
+        }
+
+
+        public class FirstMessage
+        {
+        }
+
+
+        public class SecondMessage
+        {
+        }
+    }
+
+
+    [TestFixture]
+    public class Scheduling_a_published_message_using_quartz :
+        AzureServiceBusTestFixture
+    {
+        [Test]
+        public async Task Should_get_the_message()
+        {
+            await InputQueueSendEndpoint.Send(new FirstMessage());
+
+            await _first;
+
+            await _second;
+        }
+
+        TimeSpan _testOffset;
+
+        public Scheduling_a_published_message_using_quartz()
+        {
+            _testOffset = TimeSpan.Zero;
+            AzureServiceBusTestHarness.ConfigureMessageScheduler = false;
+        }
+
+        Uri QuartzAddress { get; set; }
+
+        Task<ConsumeContext<SecondMessage>> _second;
+        Task<ConsumeContext<FirstMessage>> _first;
+
+        protected override void ConfigureServiceBusReceiveEndpoint(IServiceBusReceiveEndpointConfigurator configurator)
+        {
+            _first = Handler<FirstMessage>(configurator, async context =>
+            {
+                await context.SchedulePublish(TimeSpan.FromSeconds(1), new SecondMessage());
+            });
+
+            _second = Handled<SecondMessage>(configurator);
+        }
+
+        protected override void ConfigureServiceBusBus(IServiceBusBusFactoryConfigurator configurator)
+        {
+            QuartzAddress = configurator.UseInMemoryScheduler();
+        }
+
+
+        public class FirstMessage
+        {
+        }
+
+
+        public class SecondMessage
+        {
+        }
+    }
+
+
+    [TestFixture]
     public class Scheduling_a_message_using_quartz_and_cancelling_it :
         AzureServiceBusTestFixture
     {

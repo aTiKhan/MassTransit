@@ -2,41 +2,66 @@ namespace MassTransit.EventHubIntegration.Checkpoints
 {
     using System;
     using System.Collections.Concurrent;
+    using System.Threading;
     using Azure.Messaging.EventHubs.Processor;
 
 
-    public class PendingConfirmationCollection
+    public class PendingConfirmationCollection :
+        IDisposable
     {
-        readonly ConcurrentDictionary<long, IPendingConfirmation> _confirmations;
-        readonly string _eventHubName;
+        readonly CancellationToken _cancellationToken;
+        readonly ConcurrentDictionary<PartitionOffset, IPendingConfirmation> _confirmations;
+        readonly CancellationTokenRegistration? _registration;
 
-        public PendingConfirmationCollection(string eventHubName)
+        public PendingConfirmationCollection(CancellationToken cancellationToken)
         {
-            _eventHubName = eventHubName;
-            _confirmations = new ConcurrentDictionary<long, IPendingConfirmation>();
+            _cancellationToken = cancellationToken;
+            _confirmations = new ConcurrentDictionary<PartitionOffset, IPendingConfirmation>();
+
+            if (cancellationToken.CanBeCanceled)
+                _registration = cancellationToken.Register(Cancel);
+        }
+
+        public void Dispose()
+        {
+            _registration?.Dispose();
         }
 
         public IPendingConfirmation Add(ProcessEventArgs eventArgs)
         {
-            var pendingConfirmation = new PendingConfirmation(_eventHubName, eventArgs);
-            return _confirmations.AddOrUpdate(pendingConfirmation.Offset, key => pendingConfirmation, (key, existing) =>
+            _cancellationToken.ThrowIfCancellationRequested();
+
+            var pendingConfirmation = new PendingConfirmation(eventArgs);
+            return _confirmations.AddOrUpdate(eventArgs, key => pendingConfirmation, (key, existing) =>
             {
-                existing.Faulted($"Duplicate key: {key}, partition: {eventArgs.Partition.PartitionId}");
+                existing.Faulted($"Duplicate key: {key} on EventHub: {eventArgs.Partition.EventHubName}");
 
                 return pendingConfirmation;
             });
         }
 
-        public void Faulted(long offset, Exception exception)
+        public void Faulted(PartitionOffset partitionOffset, Exception exception)
         {
-            if (_confirmations.TryRemove(offset, out var confirmation))
+            if (_confirmations.TryRemove(partitionOffset, out var confirmation))
                 confirmation.Faulted(exception);
         }
 
-        public void Complete(long offset)
+        public void Complete(PartitionOffset partitionOffset)
         {
-            if (_confirmations.TryRemove(offset, out var confirmation))
+            if (_confirmations.TryRemove(partitionOffset, out var confirmation))
                 confirmation.Complete();
+        }
+
+        public void Canceled(PartitionOffset partitionOffset, CancellationToken cancellationToken)
+        {
+            if (_confirmations.TryRemove(partitionOffset, out var confirmation))
+                confirmation.Canceled(cancellationToken);
+        }
+
+        void Cancel()
+        {
+            foreach (var partitionOffset in _confirmations.Keys)
+                Canceled(partitionOffset, _cancellationToken);
         }
     }
 }

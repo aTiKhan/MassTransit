@@ -3,6 +3,7 @@ namespace MassTransit.AzureServiceBusTransport.Topology
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Azure.Messaging.ServiceBus.Administration;
     using Configuration;
     using MassTransit.Topology;
@@ -18,7 +19,8 @@ namespace MassTransit.AzureServiceBusTransport.Topology
         readonly IServiceBusPublishTopology _publishTopology;
         readonly ServiceBusTopicConfigurator _topicConfigurator;
 
-        public ServiceBusMessagePublishTopology(IMessageTopology<TMessage> messageTopology, IServiceBusPublishTopology publishTopology)
+        public ServiceBusMessagePublishTopology(IServiceBusPublishTopology publishTopology, IMessageTopology<TMessage> messageTopology)
+            : base(publishTopology)
         {
             _publishTopology = publishTopology;
 
@@ -28,9 +30,11 @@ namespace MassTransit.AzureServiceBusTransport.Topology
             _createTopicOptions = new Lazy<CreateTopicOptions>(() => _topicConfigurator.GetCreateTopicOptions());
         }
 
-        public override bool TryGetPublishAddress(Uri baseAddress, out Uri? publishAddress)
+        public override bool TryGetPublishAddress(Uri baseAddress, [NotNullWhen(true)] out Uri? publishAddress)
         {
-            publishAddress = new ServiceBusEndpointAddress(new Uri(baseAddress.GetLeftPart(UriPartial.Authority)), _topicConfigurator.FullPath);
+            publishAddress = new ServiceBusEndpointAddress(new Uri(baseAddress.GetLeftPart(UriPartial.Authority)),
+                _topicConfigurator.FullPath, _topicConfigurator.AutoDeleteOnIdle, ServiceBusEndpointAddress.AddressType.Topic);
+
             return true;
         }
 
@@ -85,6 +89,11 @@ namespace MassTransit.AzureServiceBusTransport.Topology
         public bool? RequiresDuplicateDetection
         {
             set => _topicConfigurator.RequiresDuplicateDetection = value;
+        }
+
+        public bool? SupportOrdering
+        {
+            set => _topicConfigurator.SupportOrdering = value;
         }
 
         public void EnableDuplicateDetection(TimeSpan historyTimeWindow)

@@ -13,9 +13,10 @@
     public class NodeList<T, TNode> :
         IEnumerable<TNode>
         where TNode : Node<T>
+        where T : notnull
     {
         readonly Func<int, T, TNode> _nodeFactory;
-        readonly IList<TNode> _nodes;
+        readonly List<TNode> _nodes;
         readonly NodeTable<T> _nodeTable;
 
         public NodeList(Func<int, T, TNode> nodeFactory, int capacity)

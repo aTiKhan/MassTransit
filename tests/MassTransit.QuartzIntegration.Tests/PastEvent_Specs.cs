@@ -2,7 +2,6 @@
 {
     using System;
     using System.Threading.Tasks;
-    using Context;
     using NUnit.Framework;
     using Scheduling;
 
@@ -17,7 +16,8 @@
         {
             Task<ConsumeContext<A>> handler = SubscribeHandler<A>();
 
-            ScheduledMessage<A> scheduledMessage = await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow + TimeSpan.FromSeconds(120), new A {Name = "Joe"});
+            ScheduledMessage<A> scheduledMessage =
+                await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow + TimeSpan.FromSeconds(120), new A { Name = "Joe" });
 
             await Task.Delay(2000);
 
@@ -31,7 +31,7 @@
         {
             Task<ConsumeContext<A>> handler = SubscribeHandler<A>();
 
-            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow, new A {Name = "Joe"});
+            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow, new A { Name = "Joe" });
 
             await handler;
         }
@@ -41,7 +41,7 @@
         {
             Task<ConsumeContext<A>> handler = SubscribeHandler<A>();
 
-            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow + TimeSpan.FromSeconds(2), new A {Name = "Joe"});
+            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow + TimeSpan.FromSeconds(2), new A { Name = "Joe" });
 
             await handler;
         }
@@ -55,7 +55,7 @@
             var correlationId = Guid.NewGuid();
             var conversationId = Guid.NewGuid();
             var initiatorId = Guid.NewGuid();
-            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow, new A {Name = "Joe"}, Pipe.Execute<SendContext>(x =>
+            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow, new A { Name = "Joe" }, Pipe.Execute<SendContext>(x =>
             {
                 x.FaultAddress = Bus.Address;
                 x.ResponseAddress = InputQueueAddress;
@@ -69,19 +69,22 @@
 
             ConsumeContext<A> context = await handler;
 
-            Assert.AreEqual(Bus.Address, context.FaultAddress);
-            Assert.AreEqual(InputQueueAddress, context.ResponseAddress);
-            Assert.IsTrue(context.RequestId.HasValue);
-            Assert.AreEqual(requestId, context.RequestId.Value);
-            Assert.IsTrue(context.CorrelationId.HasValue);
-            Assert.AreEqual(correlationId, context.CorrelationId.Value);
-            Assert.IsTrue(context.ConversationId.HasValue);
-            Assert.AreEqual(conversationId, context.ConversationId.Value);
-            Assert.IsTrue(context.InitiatorId.HasValue);
-            Assert.AreEqual(initiatorId, context.InitiatorId.Value);
+            Assert.Multiple(() =>
+            {
+                Assert.That(context.FaultAddress, Is.EqualTo(Bus.Address));
+                Assert.That(context.ResponseAddress, Is.EqualTo(InputQueueAddress));
+                Assert.That(context.RequestId.HasValue, Is.True);
+                Assert.That(context.RequestId.Value, Is.EqualTo(requestId));
+                Assert.That(context.CorrelationId.HasValue, Is.True);
+                Assert.That(context.CorrelationId.Value, Is.EqualTo(correlationId));
+                Assert.That(context.ConversationId.HasValue, Is.True);
+                Assert.That(context.ConversationId.Value, Is.EqualTo(conversationId));
+                Assert.That(context.InitiatorId.HasValue, Is.True);
+                Assert.That(context.InitiatorId.Value, Is.EqualTo(initiatorId));
 
-            Assert.IsTrue(context.Headers.TryGetHeader("Hello", out var value));
-            Assert.AreEqual("World", value);
+                Assert.That(context.Headers.TryGetHeader("Hello", out var value), Is.True);
+                Assert.That(value, Is.EqualTo("World"));
+            });
         }
 
         [Test]
@@ -89,7 +92,7 @@
         {
             Task<ConsumeContext<A>> handler = SubscribeHandler<A>();
 
-            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow + TimeSpan.FromHours(-1), new A {Name = "Joe"});
+            await Scheduler.ScheduleSend(Bus.Address, DateTime.UtcNow + TimeSpan.FromHours(-1), new A { Name = "Joe" });
 
             await handler;
         }
@@ -127,7 +130,7 @@
             });
 
             ConsumeContext<A> result = await handler;
-            Assert.AreEqual(expected, result.Message.Name);
+            Assert.That(result.Message.Name, Is.EqualTo(expected));
         }
 
         public Specifying_an_event_reschedule_if_exists()

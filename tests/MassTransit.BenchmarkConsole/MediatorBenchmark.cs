@@ -6,10 +6,11 @@ namespace MassTransit.BenchmarkConsole
     using BenchmarkDotNet.Jobs;
     using MediatR;
     using Microsoft.Extensions.DependencyInjection;
+    using Util;
 
 
     public class ExampleCommand :
-        IRequest
+        IRequest<Unit>
     {
         public ExampleCommand(string arg1, int arg2)
         {
@@ -23,28 +24,47 @@ namespace MassTransit.BenchmarkConsole
     }
 
 
-    [SimpleJob(RuntimeMoniker.Net50)]
+    [SimpleJob(RuntimeMoniker.Net60)]
     [MemoryDiagnoser]
     public class MediatorBenchmark
     {
         ExampleCommandHandler _handler;
         MassTransit.Mediator.IMediator _mediator;
         IMediator _mediatR;
+        IRequestClient<ExampleRequest> _requestClient;
 
         [GlobalSetup]
         public void Setup()
         {
             var services = new ServiceCollection();
-            services.AddMediatR(typeof(MediatorBenchmark));
-            services.AddMediator(x =>
+            services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblyContaining<MediatorBenchmark>());
+
+            _mediator = Bus.Factory.CreateMediator(cfg =>
             {
-                x.AddConsumer<ExampleCommandHandler>();
+                cfg.Consumer<ExampleCommandHandler>();
             });
 
             var provider = services.BuildServiceProvider();
+
             _mediatR = provider.GetRequiredService<IMediator>();
-            _mediator = provider.GetRequiredService<MassTransit.Mediator.IMediator>();
+
+            var busControl = Bus.Factory.CreateUsingInMemory(cfg =>
+            {
+                cfg.ReceiveEndpoint("input-queue", x => x.Consumer<ExampleRequestConsumer>());
+            });
+
+            TaskUtil.Await(() => busControl.StartAsync(CancellationToken.None));
+
+            _requestClient = busControl.CreateRequestClient<ExampleRequest>();
+
             _handler = new ExampleCommandHandler();
+        }
+
+        [Benchmark(Description = "Direct")]
+        public async Task CallingHandler_Directly()
+        {
+            var command = new ExampleCommand("Example Arg", 2);
+            await _handler.Handle(command, CancellationToken.None);
         }
 
         [Benchmark(Description = "MediatR")]
@@ -58,28 +78,52 @@ namespace MassTransit.BenchmarkConsole
         public async Task CallingHandler_WithMassTransitMediator()
         {
             var command = new ExampleCommand("Example Arg", 2);
-            await _mediatR.Send(command, CancellationToken.None);
+            await _mediator.Send(command, CancellationToken.None);
         }
 
-        [Benchmark(Description = "Direct")]
-        public async Task CallingHandler_Directly()
+        [Benchmark(Description = "InMemoryBus")]
+        public async Task CallingHandler_WithMassTransitInMemoryBus()
         {
-            var command = new ExampleCommand("Example Arg", 2);
-            await _handler.Handle(command, CancellationToken.None);
-        }
-
-        [Benchmark(Description = "Transient")]
-        public async Task CallingHandler_Directly_Transient()
-        {
-            var handler = new ExampleCommandHandler();
-            var command = new ExampleCommand("Example Arg", 2);
-            await handler.Handle(command, CancellationToken.None);
+            var request = new ExampleRequest
+            {
+                Name = "Frank",
+                Amount = 123.45m
+            };
+            await _requestClient.GetResponse<ExampleResponse>(request);
         }
     }
 
 
+    public class ExampleRequestConsumer :
+        IConsumer<ExampleRequest>
+    {
+        public Task Consume(ConsumeContext<ExampleRequest> context)
+        {
+            return context.RespondAsync(new ExampleResponse
+            {
+                Name = context.Message.Name,
+                Amount = context.Message.Amount
+            });
+        }
+    }
+
+
+    public class ExampleRequest
+    {
+        public string Name { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+
+    public class ExampleResponse
+    {
+        public string Name { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+
     public class ExampleCommandHandler :
-        IRequestHandler<ExampleCommand>,
+        IRequestHandler<ExampleCommand, Unit>,
         IConsumer<ExampleCommand>
     {
         public Task Consume(ConsumeContext<ExampleCommand> context)

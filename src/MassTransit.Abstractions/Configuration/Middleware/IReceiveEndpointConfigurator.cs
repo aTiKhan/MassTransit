@@ -10,7 +10,9 @@ namespace MassTransit
     /// </summary>
     public interface IReceiveEndpointConfigurator :
         IEndpointConfigurator,
-        IReceiveEndpointObserverConnector
+        IReceiveEndpointObserverConnector,
+        IReceiveEndpointDependencyConnector,
+        IReceiveEndpointDependentConnector
     {
         /// <summary>
         /// Returns the input address of the receive endpoint
@@ -58,6 +60,12 @@ namespace MassTransit
         void ConfigureMessageTopology<T>(bool enabled = true)
             where T : class;
 
+        /// <summary>
+        /// Configures whether the broker topology is configured for the specified message type. Related to
+        /// <see cref="ConfigureConsumeTopology" />, but for an individual message type.
+        /// </summary>
+        void ConfigureMessageTopology(Type messageType, bool enabled = true);
+
         [EditorBrowsable(EditorBrowsableState.Never)]
         void AddEndpointSpecification(IReceiveEndpointSpecification configurator);
 
@@ -79,11 +87,5 @@ namespace MassTransit
         /// Clears all message serialization configuration
         /// </summary>
         void ClearSerialization();
-
-        /// <summary>
-        /// Add the observable receive endpoint as a dependency
-        /// </summary>
-        /// <param name="connector"></param>
-        void AddDependency(IReceiveEndpointObserverConnector connector);
     }
 }

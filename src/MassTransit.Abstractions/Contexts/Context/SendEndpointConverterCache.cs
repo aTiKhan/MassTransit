@@ -27,6 +27,17 @@ namespace MassTransit.Context
             return Cached.Converters.Value[messageType].Send(endpoint, message, pipe, cancellationToken);
         }
 
+        public static Task SendInitializer(ISendEndpoint endpoint, Type messageType, object values, CancellationToken cancellationToken = default)
+        {
+            return Cached.Converters.Value[messageType].SendInitializer(endpoint, values, cancellationToken);
+        }
+
+        public static Task SendInitializer(ISendEndpoint endpoint, Type messageType, object values, IPipe<SendContext> pipe,
+            CancellationToken cancellationToken = default)
+        {
+            return Cached.Converters.Value[messageType].SendInitializer(endpoint, values, pipe, cancellationToken);
+        }
+
         static Lazy<ISendEndpointConverter> CreateTypeConverter(Type type)
         {
             return new Lazy<ISendEndpointConverter>(() => CreateConverter(type));
@@ -34,7 +45,8 @@ namespace MassTransit.Context
 
         static ISendEndpointConverter CreateConverter(Type type)
         {
-            return (ISendEndpointConverter)Activator.CreateInstance(typeof(SendEndpointConverter<>).MakeGenericType(type));
+            return Activator.CreateInstance(typeof(SendEndpointConverter<>).MakeGenericType(type)) as ISendEndpointConverter
+                ?? throw new InvalidOperationException("Failed to create SendEndpointConverter");
         }
 
 
@@ -46,6 +58,10 @@ namespace MassTransit.Context
             Task Send(ISendEndpoint endpoint, object message, CancellationToken cancellationToken = default);
 
             Task Send(ISendEndpoint endpoint, object message, IPipe<SendContext> pipe, CancellationToken cancellationToken = default);
+
+            Task SendInitializer(ISendEndpoint endpoint, object values, CancellationToken cancellationToken = default);
+
+            Task SendInitializer(ISendEndpoint endpoint, object values, IPipe<SendContext> pipe, CancellationToken cancellationToken = default);
         }
 
 
@@ -85,13 +101,34 @@ namespace MassTransit.Context
 
                 throw new ArgumentException("Unexpected message type: " + TypeCache.GetShortName(message.GetType()));
             }
+
+            public Task SendInitializer(ISendEndpoint endpoint, object values, CancellationToken cancellationToken)
+            {
+                if (endpoint == null)
+                    throw new ArgumentNullException(nameof(endpoint));
+                if (values == null)
+                    throw new ArgumentNullException(nameof(values));
+
+                return endpoint.Send<T>(values, cancellationToken);
+            }
+
+            public Task SendInitializer(ISendEndpoint endpoint, object values, IPipe<SendContext> pipe, CancellationToken cancellationToken)
+            {
+                if (endpoint == null)
+                    throw new ArgumentNullException(nameof(endpoint));
+                if (values == null)
+                    throw new ArgumentNullException(nameof(values));
+                if (pipe == null)
+                    throw new ArgumentNullException(nameof(pipe));
+
+                return endpoint.Send<T>(values, pipe, cancellationToken);
+            }
         }
 
 
         static class Cached
         {
-            internal static readonly Lazy<SendEndpointConverterCache> Converters =
-                new Lazy<SendEndpointConverterCache>(() => new SendEndpointConverterCache(), LazyThreadSafetyMode.PublicationOnly);
+            internal static readonly Lazy<SendEndpointConverterCache> Converters = new Lazy<SendEndpointConverterCache>(() => new SendEndpointConverterCache());
         }
     }
 }

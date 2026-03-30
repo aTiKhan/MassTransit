@@ -5,11 +5,10 @@
     using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
-    using Courier;
     using Courier.Contracts;
-    using MassTransit.Testing;
     using NUnit.Framework;
     using TestFramework.Courier;
+    using Testing;
 
 
     [TestFixture]
@@ -46,7 +45,7 @@
         {
             var activityCompleted = (await _firstActivityCompleted);
 
-            Assert.AreEqual("Hello", activityCompleted.GetResult<string>("OriginalValue"));
+            Assert.That(activityCompleted.GetResult<string>("OriginalValue"), Is.EqualTo("Hello"));
         }
 
         [Test]
@@ -55,7 +54,7 @@
         {
             var completed = await _completed;
 
-            Assert.AreEqual("Hello, World!", completed.GetVariable<string>("Value"));
+            Assert.That(completed.GetVariable<string>("Value"), Is.EqualTo("Hello, World!"));
         }
 
         [Test]
@@ -64,7 +63,7 @@
         {
             var completed = (await _completed).Message;
 
-            Assert.AreEqual("Knife", completed.Variables["Variable"]);
+            Assert.That(completed.Variables["Variable"], Is.EqualTo("Knife"));
         }
 
         [Test]
@@ -73,7 +72,7 @@
         {
             var activityCompleted = (await _firstActivityCompleted).Message;
 
-            Assert.AreEqual("Knife", activityCompleted.Variables["Variable"]);
+            Assert.That(activityCompleted.Variables["Variable"], Is.EqualTo("Knife"));
         }
 
         [Test]
@@ -82,7 +81,7 @@
         {
             var activityCompleted = (await _firstActivityCompleted).Message;
 
-            Assert.AreEqual(_routingSlip.TrackingNumber, activityCompleted.TrackingNumber);
+            Assert.That(activityCompleted.TrackingNumber, Is.EqualTo(_routingSlip.TrackingNumber));
         }
 
         [Test]
@@ -91,7 +90,7 @@
         {
             var completed = (await _completed).Message;
 
-            Assert.AreEqual(_routingSlip.TrackingNumber, completed.TrackingNumber);
+            Assert.That(completed.TrackingNumber, Is.EqualTo(_routingSlip.TrackingNumber));
         }
 
         [Test]
@@ -100,7 +99,7 @@
         {
             var activityCompleted = (await _secondActivityCompleted).Message;
 
-            Assert.AreEqual(_routingSlip.TrackingNumber, activityCompleted.TrackingNumber);
+            Assert.That(activityCompleted.TrackingNumber, Is.EqualTo(_routingSlip.TrackingNumber));
         }
 
         [Test]
@@ -166,7 +165,7 @@
 
             var completed = (await _completed).Message;
 
-            Assert.AreEqual(_routingSlip.TrackingNumber, completed.TrackingNumber);
+            Assert.That(completed.TrackingNumber, Is.EqualTo(_routingSlip.TrackingNumber));
         }
 
         public Executing_with_no_observers()

@@ -1,18 +1,19 @@
 ﻿namespace MassTransit.SignalR.Tests
 {
     using System.Linq;
+    using System.Text.Json;
     using System.Threading.Tasks;
     using Contracts;
     using Microsoft.AspNetCore.SignalR;
     using Microsoft.AspNetCore.SignalR.Protocol;
-    using Newtonsoft.Json.Linq;
-    using Newtonsoft.Json.Serialization;
     using NUnit.Framework;
     using OfficialFramework;
     using Testing;
+    using Utils;
 
 
-    public class MassTransitHubLifetimeManagerTests : MassTransitHubLifetimeTestFixture<MyHub>
+    public class MassTransitHubLifetimeManagerTests :
+        MassTransitHubLifetimeTestFixture<MyHub>
     {
         protected override BusTestHarness Harness { get; set; }
 
@@ -24,7 +25,7 @@
             var messagePackOptions = new MessagePackHubProtocolOptions();
 
             var jsonOptions = new JsonHubProtocolOptions();
-            jsonOptions.PayloadSerializerSettings.ContractResolver = new CamelCasePropertyNamesContractResolver();
+            jsonOptions.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
             SignalRBackplaneConsumersTestHarness<MyHub> backplane1Harness = RegisterBusEndpoint("receiveEndpoint1");
             SignalRBackplaneConsumersTestHarness<MyHub> backplane2Harness = RegisterBusEndpoint("receiveEndpoint2");
 
@@ -46,19 +47,21 @@
                     await manager1.OnConnectedAsync(connection1).OrTimeout(Harness.TestTimeout);
                     await manager2.OnConnectedAsync(connection2).OrTimeout(Harness.TestTimeout);
 
-                    await manager1.SendAllAsync("Hello", new object[] {new TestObject {TestProperty = "Foo"}}).OrTimeout(Harness.TestTimeout);
+                    await manager1.SendAllAsync("Hello", new object[] { new TestObject { TestProperty = "Foo" } }).OrTimeout(Harness.TestTimeout);
 
-                    Assert.IsTrue(backplane2Harness.All.Consumed.Select<All<MyHub>>().Any());
+                    Assert.That(backplane2Harness.All.Consumed.Select<All<MyHub>>().Any(), Is.True);
 
                     var message = await client2.ReadAsync().OrTimeout() as InvocationMessage;
-                    Assert.NotNull(message);
-                    Assert.AreEqual("Hello", message.Target);
-                    CollectionAssert.AllItemsAreInstancesOfType(message.Arguments, typeof(JObject));
-                    var jObject = message.Arguments[0] as JObject;
-                    Assert.NotNull(jObject);
-                    var firstProperty = jObject.Properties().First();
-                    Assert.AreEqual("testProperty", firstProperty.Name);
-                    Assert.AreEqual("Foo", firstProperty.Value.Value<string>());
+                    Assert.That(message, Is.Not.Null);
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(message.Target, Is.EqualTo("Hello"));
+                        Assert.That(message.Arguments, Is.All.InstanceOf(typeof(JsonElement)));
+                    });
+                    var jsonElement = message.Arguments[0] as JsonElement?;
+                    Assert.That(jsonElement, Is.Not.Null);
+                    var testProperty = jsonElement.Value.GetProperty("testProperty");
+                    Assert.That(testProperty.GetString(), Is.EqualTo("Foo"));
                 }
             }
             finally

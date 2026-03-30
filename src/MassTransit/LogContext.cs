@@ -1,10 +1,11 @@
 namespace MassTransit
 {
     using System;
-    using System.Diagnostics;
     using System.Threading;
     using Logging;
+    using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Logging;
+    using Microsoft.Extensions.Logging.Abstractions;
 
 
     public static class LogContext
@@ -35,7 +36,7 @@ namespace MassTransit
 
         public static void ConfigureCurrentLogContext(ILoggerFactory loggerFactory = null)
         {
-            Current = new BusLogContext(loggerFactory ?? NullLoggerFactory.Instance, Cached.Source.Value);
+            Current = new BusLogContext(loggerFactory ?? NullLoggerFactory.Instance);
         }
 
         /// <summary>
@@ -45,12 +46,7 @@ namespace MassTransit
         /// <param name="logger">An existing logger</param>
         public static void ConfigureCurrentLogContext(ILogger logger)
         {
-            Current = new BusLogContext(new SingleLoggerFactory(logger), Cached.Source.Value);
-        }
-
-        public static EnabledScope? BeginScope()
-        {
-            return Current?.BeginScope();
+            Current = new BusLogContext(new SingleLoggerFactory(logger));
         }
 
         public static ILogContext CreateLogContext(string categoryName)
@@ -58,6 +54,25 @@ namespace MassTransit
             var current = Current ??= CreateDefaultLogContext();
 
             return current.CreateLogContext(categoryName);
+        }
+
+        /// <summary>
+        /// If <see cref="Current"/> is not null or the null logger, configure the current LogContext
+        /// using the specified service provider.
+        /// </summary>
+        /// <param name="provider"></param>
+        public static void ConfigureCurrentLogContextIfNull(IServiceProvider provider)
+        {
+            LogContextInstrumentationExtensions.TryConfigure(provider);
+
+            if (Current == null || Current.Logger is NullLogger)
+            {
+                var loggerFactory = provider.GetService<ILoggerFactory>();
+                if (loggerFactory != null)
+                    ConfigureCurrentLogContext(loggerFactory);
+                else if (Current == null)
+                    ConfigureCurrentLogContext();
+            }
         }
 
         public static void SetCurrentIfNull(ILogContext context)
@@ -193,23 +208,9 @@ namespace MassTransit
 
         static ILogContext CreateDefaultLogContext()
         {
-            var source = Cached.Source.Value;
-
             var loggerFactory = NullLoggerFactory.Instance;
 
-            return new BusLogContext(loggerFactory, source);
-        }
-
-        public static EnabledActivitySource? IfEnabled(string name)
-        {
-            return Current?.IfEnabled(name);
-        }
-
-
-        static class Cached
-        {
-            internal static readonly Lazy<ActivitySource> Source =
-                new Lazy<ActivitySource>(() => new ActivitySource(DiagnosticHeaders.DefaultListenerName));
+            return new BusLogContext(loggerFactory);
         }
     }
 }

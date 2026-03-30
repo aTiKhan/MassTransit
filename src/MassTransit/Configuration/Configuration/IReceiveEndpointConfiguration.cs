@@ -8,7 +8,8 @@
 
     public interface IReceiveEndpointConfiguration :
         IEndpointConfiguration,
-        IReceiveEndpointObserverConnector
+        IReceiveEndpointObserverConnector,
+        IReceiveEndpointDependentConnector
     {
         IConsumePipe ConsumePipe { get; }
 
@@ -32,7 +33,12 @@
         /// <summary>
         /// Completed once the receive endpoint dependencies are ready
         /// </summary>
-        Task Dependencies { get; }
+        Task DependenciesReady { get; }
+
+        /// <summary>
+        /// Completed once the receive endpoint dependents are completed
+        /// </summary>
+        Task DependentsCompleted { get; }
 
         /// <summary>
         /// Create the receive pipe, using the endpoint configuration

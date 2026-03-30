@@ -1,7 +1,6 @@
 namespace MassTransit.Configuration
 {
     using System;
-    using Courier;
 
 
     /// <summary>
@@ -10,12 +9,12 @@ namespace MassTransit.Configuration
     public interface IExecuteActivityRegistration :
         IRegistration
     {
-        void AddConfigureAction<T, TArguments>(Action<IExecuteActivityConfigurator<T, TArguments>> configure)
+        void AddConfigureAction<T, TArguments>(Action<IRegistrationContext, IExecuteActivityConfigurator<T, TArguments>> configure)
             where T : class, IExecuteActivity<TArguments>
             where TArguments : class;
 
-        void Configure(IReceiveEndpointConfigurator configurator, IServiceProvider scopeProvider);
+        void Configure(IReceiveEndpointConfigurator configurator, IRegistrationContext context);
 
-        IExecuteActivityDefinition GetDefinition(IServiceProvider provider);
+        IExecuteActivityDefinition GetDefinition(IRegistrationContext context);
     }
 }

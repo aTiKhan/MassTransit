@@ -3,6 +3,7 @@ namespace MassTransit.DependencyInjection.Registration
     using System;
     using System.Collections.Generic;
     using Configuration;
+    using Internals;
     using Microsoft.Extensions.DependencyInjection;
     using Transports;
 
@@ -17,38 +18,43 @@ namespace MassTransit.DependencyInjection.Registration
         IConsumerRegistration
         where TConsumer : class, IConsumer
     {
-        readonly List<Action<IConsumerConfigurator<TConsumer>>> _configureActions;
+        readonly List<Action<IRegistrationContext, IConsumerConfigurator<TConsumer>>> _configureActions;
+        readonly IContainerSelector _selector;
         IConsumerDefinition<TConsumer> _definition;
 
-        public ConsumerRegistration()
+        public ConsumerRegistration(IContainerSelector selector)
         {
-            _configureActions = new List<Action<IConsumerConfigurator<TConsumer>>>();
+            _selector = selector;
+            _configureActions = new List<Action<IRegistrationContext, IConsumerConfigurator<TConsumer>>>();
+            IncludeInConfigureEndpoints = !Type.HasAttribute<ExcludeFromConfigureEndpointsAttribute>();
         }
 
         public Type Type => typeof(TConsumer);
 
-        void IConsumerRegistration.AddConfigureAction<T>(Action<IConsumerConfigurator<T>> configure)
+        public bool IncludeInConfigureEndpoints { get; set; }
+
+        void IConsumerRegistration.AddConfigureAction<T>(Action<IRegistrationContext, IConsumerConfigurator<T>> configure)
         {
-            if (configure is Action<IConsumerConfigurator<TConsumer>> action)
+            if (configure is Action<IRegistrationContext, IConsumerConfigurator<TConsumer>> action)
                 _configureActions.Add(action);
         }
 
-        void IConsumerRegistration.Configure(IReceiveEndpointConfigurator configurator, IServiceProvider provider)
+        void IConsumerRegistration.Configure(IReceiveEndpointConfigurator configurator, IRegistrationContext context)
         {
-            var scopeProvider = provider.GetRequiredService<IConsumeScopeProvider>();
+            IConsumeScopeProvider scopeProvider = new ConsumeScopeProvider(context);
             IConsumerFactory<TConsumer> consumerFactory = new ScopeConsumerFactory<TConsumer>(scopeProvider);
 
-            var decoratorRegistration = provider.GetService<IConsumerFactoryDecoratorRegistration<TConsumer>>();
+            var decoratorRegistration = context.GetService<IConsumerFactoryDecoratorRegistration<TConsumer>>();
             if (decoratorRegistration != null)
                 consumerFactory = decoratorRegistration.DecorateConsumerFactory(consumerFactory);
 
             var consumerConfigurator = new ConsumerConfigurator<TConsumer>(consumerFactory, configurator);
 
-            GetConsumerDefinition(provider)
-                .Configure(configurator, consumerConfigurator);
+            GetConsumerDefinition(context)
+                .Configure(configurator, consumerConfigurator, context);
 
-            foreach (Action<IConsumerConfigurator<TConsumer>> action in _configureActions)
-                action(consumerConfigurator);
+            foreach (Action<IRegistrationContext, IConsumerConfigurator<TConsumer>> action in _configureActions)
+                action(context, consumerConfigurator);
 
             var endpointName = configurator.InputAddress.GetEndpointName();
 
@@ -60,14 +66,14 @@ namespace MassTransit.DependencyInjection.Registration
             configurator.AddEndpointSpecification(consumerConfigurator);
         }
 
-        IConsumerDefinition IConsumerRegistration.GetDefinition(IServiceProvider provider)
+        IConsumerDefinition IConsumerRegistration.GetDefinition(IRegistrationContext context)
         {
-            return GetConsumerDefinition(provider);
+            return GetConsumerDefinition(context);
         }
 
         public IConsumerRegistrationConfigurator GetConsumerRegistrationConfigurator(IRegistrationConfigurator registrationConfigurator)
         {
-            return new ConsumerRegistrationConfigurator<TConsumer>(registrationConfigurator);
+            return new ConsumerRegistrationConfigurator<TConsumer>(registrationConfigurator, this);
         }
 
         IConsumerDefinition<TConsumer> GetConsumerDefinition(IServiceProvider provider)
@@ -75,9 +81,9 @@ namespace MassTransit.DependencyInjection.Registration
             if (_definition != null)
                 return _definition;
 
-            _definition = provider.GetService<IConsumerDefinition<TConsumer>>() ?? new DefaultConsumerDefinition<TConsumer>();
+            _definition = _selector.GetDefinition<IConsumerDefinition<TConsumer>>(provider) ?? new DefaultConsumerDefinition<TConsumer>();
 
-            var endpointDefinition = provider.GetService<IEndpointDefinition<TConsumer>>();
+            IEndpointDefinition<TConsumer> endpointDefinition = _selector.GetEndpointDefinition<TConsumer>(provider);
             if (endpointDefinition != null)
                 _definition.EndpointDefinition = endpointDefinition;
 

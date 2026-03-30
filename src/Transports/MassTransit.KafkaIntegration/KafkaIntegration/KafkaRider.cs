@@ -14,32 +14,20 @@ namespace MassTransit.KafkaIntegration
         IKafkaRider
     {
         readonly IBusInstance _busInstance;
+        readonly IRiderRegistrationContext _context;
         readonly IReceiveEndpointCollection _endpoints;
         readonly IKafkaHostConfiguration _hostConfiguration;
-        readonly ITopicProducerProvider _producerProvider;
-        readonly IRiderRegistrationContext _registrationContext;
+        Lazy<ITopicProducerProvider> _producerProvider;
 
         public KafkaRider(IKafkaHostConfiguration hostConfiguration, IBusInstance busInstance, IReceiveEndpointCollection endpoints,
-            ITopicProducerProvider producerProvider, IRiderRegistrationContext registrationContext)
+            IRiderRegistrationContext context)
         {
             _hostConfiguration = hostConfiguration;
             _busInstance = busInstance;
             _endpoints = endpoints;
-            _producerProvider = producerProvider;
-            _registrationContext = registrationContext;
-        }
+            _context = context;
 
-        public ITopicProducer<TKey, TValue> GetProducer<TKey, TValue>(Uri address, ConsumeContext consumeContext)
-            where TValue : class
-        {
-            if (address == null)
-                throw new ArgumentNullException(nameof(address));
-
-            var provider = consumeContext == null
-                ? _producerProvider
-                : new ConsumeContextTopicProducerProvider(_producerProvider, consumeContext);
-
-            return provider.GetProducer<TKey, TValue>(address);
+            Reset();
         }
 
         public HostReceiveEndpointHandle ConnectTopicEndpoint<TKey, TValue>(string topicName, string groupId,
@@ -48,7 +36,7 @@ namespace MassTransit.KafkaIntegration
         {
             var specification = _hostConfiguration.CreateSpecification<TKey, TValue>(topicName, groupId, configurator =>
             {
-                configure?.Invoke(_registrationContext, configurator);
+                configure?.Invoke(_context, configurator);
             });
 
             _endpoints.Add(specification.EndpointName, specification.CreateReceiveEndpoint(_busInstance));
@@ -62,7 +50,7 @@ namespace MassTransit.KafkaIntegration
         {
             var specification = _hostConfiguration.CreateSpecification<TKey, TValue>(topicName, consumerConfig, configurator =>
             {
-                configure?.Invoke(_registrationContext, configurator);
+                configure?.Invoke(_context, configurator);
             });
 
             _endpoints.Add(specification.EndpointName, specification.CreateReceiveEndpoint(_busInstance));
@@ -76,9 +64,30 @@ namespace MassTransit.KafkaIntegration
 
             var ready = endpointsHandle.Length == 0 ? Task.CompletedTask : _hostConfiguration.ClientContextSupervisor.Ready;
 
-            var agent = new RiderAgent(_hostConfiguration.ClientContextSupervisor, _endpoints, ready);
+            var agent = new RiderAgent(_hostConfiguration.ClientContextSupervisor, _endpoints, ready, Reset);
 
             return new Handle(endpointsHandle, agent);
+        }
+
+        public IEnumerable<EndpointHealthResult> CheckEndpointHealth()
+        {
+            return _endpoints.CheckEndpointHealth();
+        }
+
+        public ConnectHandle ConnectSendObserver(ISendObserver observer)
+        {
+            return _producerProvider.Value.ConnectSendObserver(observer);
+        }
+
+        public ITopicProducer<TKey, TValue> GetProducer<TKey, TValue>(Uri address)
+            where TValue : class
+        {
+            return _producerProvider.Value.GetProducer<TKey, TValue>(address);
+        }
+
+        void Reset()
+        {
+            _producerProvider = new Lazy<ITopicProducerProvider>(() => new TopicProducerProvider(_busInstance, _hostConfiguration));
         }
 
 
@@ -86,12 +95,14 @@ namespace MassTransit.KafkaIntegration
             Agent
         {
             readonly IReceiveEndpointCollection _endpoints;
+            readonly Action _onStop;
             readonly IClientContextSupervisor _supervisor;
 
-            public RiderAgent(IClientContextSupervisor supervisor, IReceiveEndpointCollection endpoints, Task ready)
+            public RiderAgent(IClientContextSupervisor supervisor, IReceiveEndpointCollection endpoints, Task ready, Action onStop)
             {
                 _supervisor = supervisor;
                 _endpoints = endpoints;
+                _onStop = onStop;
 
                 SetReady(ready);
                 SetCompleted(_supervisor.Completed);
@@ -99,9 +110,10 @@ namespace MassTransit.KafkaIntegration
 
             protected override async Task StopAgent(StopContext context)
             {
-                await _endpoints.Stop(context.CancellationToken).ConfigureAwait(false);
+                await _endpoints.StopEndpoints(context.CancellationToken).ConfigureAwait(false);
                 await _supervisor.Stop(context).ConfigureAwait(false);
                 await base.StopAgent(context).ConfigureAwait(false);
+                _onStop();
             }
         }
 

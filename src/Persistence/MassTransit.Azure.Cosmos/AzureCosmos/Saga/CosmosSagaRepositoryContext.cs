@@ -177,7 +177,8 @@ namespace MassTransit.AzureCosmos.Saga
 
     public class CosmosSagaRepositoryContext<TSaga> :
         BasePipeContext,
-        SagaRepositoryContext<TSaga>
+        QuerySagaRepositoryContext<TSaga>,
+        LoadSagaRepositoryContext<TSaga>
         where TSaga : class, ISaga
     {
         readonly DatabaseContext<TSaga> _context;
@@ -186,26 +187,6 @@ namespace MassTransit.AzureCosmos.Saga
             : base(cancellationToken)
         {
             _context = context;
-        }
-
-        public async Task<SagaRepositoryQueryContext<TSaga>> Query(ISagaQuery<TSaga> query, CancellationToken cancellationToken = default)
-        {
-            QueryRequestOptions queryOptions = null;
-
-            if (_context.QueryRequestOptions != null)
-            {
-                queryOptions = new QueryRequestOptions();
-                _context.QueryRequestOptions?.Invoke(queryOptions);
-            }
-
-            // This will not work for Document Db because the .Where needs to look for [JsonProperty("id")],
-            // and if you pass in CorrelationId property, the ISaga doesn't have that property. Can we .Select() it out?
-            IEnumerable<TSaga> instances = await _context.Container.GetItemLinqQueryable<TSaga>(requestOptions: queryOptions)
-                .Where(query.FilterExpression)
-                .QueryAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            return new LoadedSagaRepositoryQueryContext<TSaga>(this, instances);
         }
 
         public async Task<TSaga> Load(Guid correlationId)
@@ -226,6 +207,27 @@ namespace MassTransit.AzureCosmos.Saga
             {
                 return default;
             }
+        }
+
+        public async Task<SagaRepositoryQueryContext<TSaga>> Query(ISagaQuery<TSaga> query, CancellationToken cancellationToken = default)
+        {
+            QueryRequestOptions queryOptions = null;
+
+            if (_context.QueryRequestOptions != null)
+            {
+                queryOptions = new QueryRequestOptions();
+                _context.QueryRequestOptions?.Invoke(queryOptions);
+            }
+
+            // This will not work for Document Db because the .Where needs to look for [JsonProperty("id")],
+            // and if you pass in CorrelationId property, the ISaga doesn't have that property. Can we .Select() it out?
+            IEnumerable<TSaga> instances = await _context.Container.GetItemLinqQueryable<TSaga>(requestOptions: queryOptions,
+                    linqSerializerOptions: _context.GetLinqSerializerOptions())
+                .Where(query.FilterExpression)
+                .QueryAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return new LoadedSagaRepositoryQueryContext<TSaga>(this, instances);
         }
     }
 }

@@ -2,7 +2,6 @@ namespace MassTransit.Context
 {
     using System;
     using System.Threading.Tasks;
-    using RetryPolicies;
 
 
     public class RetryExecuteContext<TArguments> :
@@ -11,6 +10,7 @@ namespace MassTransit.Context
         where TArguments : class
     {
         readonly ExecuteContext<TArguments> _context;
+        readonly ExecutionResult _existingResult;
         readonly IRetryPolicy _retryPolicy;
 
         public RetryExecuteContext(ExecuteContext<TArguments> context, IRetryPolicy retryPolicy, RetryContext retryContext)
@@ -19,12 +19,20 @@ namespace MassTransit.Context
             _retryPolicy = retryPolicy;
             _context = context;
 
-            context.Result = new RetryExecutionResult();
+            if (retryContext is RetryContext<ExecuteContext<TArguments>> executeRetryContext)
+                _existingResult = executeRetryContext.Context.Result;
+
+            Result = new RetryExecutionResult();
 
             if (retryContext != null)
             {
                 RetryAttempt = retryContext.RetryAttempt;
                 RetryCount = retryContext.RetryCount;
+            }
+            else if (context.TryGetPayload<ConsumeRetryContext>(out var existingRetryContext))
+            {
+                RetryCount = existingRetryContext.RetryCount;
+                RetryAttempt = existingRetryContext.RetryAttempt;
             }
         }
 
@@ -35,11 +43,17 @@ namespace MassTransit.Context
         public TContext CreateNext<TContext>(RetryContext retryContext)
             where TContext : class, ConsumeRetryContext
         {
+            if (retryContext is RetryContext<ExecuteContext<TArguments>> executeRetryContext && _existingResult != null)
+                executeRetryContext.Context.Result = _existingResult;
+
             return new RetryExecuteContext<TArguments>(_context, _retryPolicy, retryContext) as TContext;
         }
 
         public Task NotifyPendingFaults()
         {
+            if (_existingResult != null && Result is RetryExecutionResult)
+                Result = _existingResult;
+
             return Task.CompletedTask;
         }
 
@@ -47,6 +61,13 @@ namespace MassTransit.Context
         class RetryExecutionResult :
             ExecutionResult
         {
+            readonly Exception _exception;
+
+            public RetryExecutionResult(Exception exception = null)
+            {
+                _exception = exception;
+            }
+
             public Task Evaluate()
             {
                 return Task.CompletedTask;
@@ -54,8 +75,8 @@ namespace MassTransit.Context
 
             public bool IsFaulted(out Exception exception)
             {
-                exception = null;
-                return false;
+                exception = _exception;
+                return exception != null;
             }
         }
     }

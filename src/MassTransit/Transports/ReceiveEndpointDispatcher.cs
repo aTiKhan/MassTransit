@@ -5,7 +5,6 @@ namespace MassTransit.Transports
     using System.Threading;
     using System.Threading.Tasks;
     using Context;
-    using Courier;
     using Internals;
 
 
@@ -84,7 +83,7 @@ namespace MassTransit.Transports
 
             try
             {
-                await _dispatcher.Dispatch(context).ConfigureAwait(false);
+                await _dispatcher.Dispatch(context, NoLockReceiveContext.Instance).ConfigureAwait(false);
             }
             finally
             {

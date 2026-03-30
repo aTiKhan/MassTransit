@@ -10,11 +10,16 @@ namespace MassTransit.ActiveMqTransport
         readonly IMessageNameFormatter _formatter;
 
         public ActiveMqMessageNameFormatter()
+            : this(true)
         {
-            _formatter = new DefaultMessageNameFormatter("::", "--", ".", "-");
         }
 
-        public MessageName GetMessageName(Type type)
+        public ActiveMqMessageNameFormatter(bool includeNamespace)
+        {
+            _formatter = new DefaultMessageNameFormatter("::", "--", ".", "-", includeNamespace);
+        }
+
+        public string GetMessageName(Type type)
         {
             return _formatter.GetMessageName(type);
         }

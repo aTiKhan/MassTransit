@@ -25,16 +25,18 @@ namespace MassTransit.Internals
         {
             if (property.DeclaringType == null)
                 throw new ArgumentException("DeclaringType is null", nameof(property));
+            if (!property.CanWrite || property.SetMethod == null)
+                return (_, __) => throw new InvalidOperationException("No SetMethod available on " + property.Name);
 
             var instance = Expression.Parameter(typeof(object), "instance");
             var value = Expression.Parameter(typeof(object), "value");
 
             // value as T is slightly faster than (T)value, so if it's not a value type, use that
-            var instanceCast = property.DeclaringType.GetTypeInfo().IsValueType
+            var instanceCast = property.DeclaringType.IsValueType
                 ? Expression.Convert(instance, property.DeclaringType)
                 : Expression.TypeAs(instance, property.DeclaringType);
 
-            var valueCast = property.PropertyType.GetTypeInfo().IsValueType
+            var valueCast = property.PropertyType.IsValueType
                 ? Expression.Convert(value, property.PropertyType)
                 : Expression.TypeAs(value, property.PropertyType);
 
@@ -76,12 +78,12 @@ namespace MassTransit.Internals
 
         static Action<T, object> GetSetMethod(PropertyInfo property)
         {
-            if (!property.CanWrite)
-                return (_, __) => throw new InvalidOperationException("No setter available on " + property.Name);
+            if (!property.CanWrite || property.SetMethod == null)
+                return (_, __) => throw new InvalidOperationException("No SetMethod available on " + property.Name);
 
             var instance = Expression.Parameter(typeof(T), "instance");
             var value = Expression.Parameter(typeof(object), "value");
-            var valueCast = property.PropertyType.GetTypeInfo().IsValueType
+            var valueCast = property.PropertyType.IsValueType
                 ? Expression.Convert(value, property.PropertyType)
                 : Expression.TypeAs(value, property.PropertyType);
             var call = Expression.Call(instance, property.SetMethod, valueCast);
@@ -122,8 +124,8 @@ namespace MassTransit.Internals
 
         static Action<T, TProperty> GetSetMethod(PropertyInfo property)
         {
-            if (!property.CanWrite)
-                return (_, __) => throw new InvalidOperationException("No setter available on " + property.Name);
+            if (!property.CanWrite || property.SetMethod == null)
+                return (_, __) => throw new InvalidOperationException("No SetMethod available on " + property.Name);
 
             var instance = Expression.Parameter(typeof(T), "instance");
             var value = Expression.Parameter(typeof(TProperty), "value");

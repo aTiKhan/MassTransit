@@ -3,6 +3,7 @@ namespace MassTransit.RabbitMqTransport.Topology
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Configuration;
     using MassTransit.Topology;
     using RabbitMQ.Client;
@@ -14,12 +15,13 @@ namespace MassTransit.RabbitMqTransport.Topology
         where TMessage : class
     {
         readonly RabbitMqExchangeConfigurator _exchange;
-        readonly IList<IRabbitMqMessagePublishTopology> _implementedMessageTypes;
+        readonly List<IRabbitMqMessagePublishTopology> _implementedMessageTypes;
         readonly IRabbitMqPublishTopology _publishTopology;
-        readonly IList<IRabbitMqPublishTopologySpecification> _specifications;
+        readonly List<IRabbitMqPublishTopologySpecification> _specifications;
 
         public RabbitMqMessagePublishTopology(IRabbitMqPublishTopology publishTopology, IMessageTopology<TMessage> messageTopology,
             IMessageExchangeTypeSelector<TMessage> exchangeTypeSelector)
+            : base(publishTopology)
         {
             _publishTopology = publishTopology;
             ExchangeTypeSelector = exchangeTypeSelector;
@@ -66,7 +68,7 @@ namespace MassTransit.RabbitMqTransport.Topology
                 configurator.Apply(builder);
         }
 
-        public override bool TryGetPublishAddress(Uri baseAddress, out Uri? publishAddress)
+        public override bool TryGetPublishAddress(Uri baseAddress, [NotNullWhen(true)] out Uri? publishAddress)
         {
             publishAddress = _exchange.GetEndpointAddress(baseAddress);
             return true;
@@ -74,7 +76,7 @@ namespace MassTransit.RabbitMqTransport.Topology
 
         public SendSettings GetSendSettings(Uri hostAddress)
         {
-            return new RabbitMqSendSettings(GetEndpointAddress(hostAddress));
+            return new RabbitMqSendSettings(_exchange.GetEndpointAddress(hostAddress));
         }
 
         public BrokerTopology GetBrokerTopology()
@@ -84,6 +86,11 @@ namespace MassTransit.RabbitMqTransport.Topology
             Apply(builder);
 
             return builder.BuildBrokerTopology();
+        }
+
+        public void ApplyBrokerTopology(IPublishEndpointBrokerTopologyBuilder builder)
+        {
+            Apply(builder);
         }
 
         public Exchange Exchange => _exchange;
@@ -137,11 +144,6 @@ namespace MassTransit.RabbitMqTransport.Topology
             BindQueue(exchangeName, queueName, configure);
 
             AlternateExchange = exchangeName;
-        }
-
-        public RabbitMqEndpointAddress GetEndpointAddress(Uri hostAddress)
-        {
-            return _exchange.GetEndpointAddress(hostAddress);
         }
 
         public void AddImplementedMessageConfigurator<T>(IRabbitMqMessagePublishTopologyConfigurator<T> configurator, bool direct)

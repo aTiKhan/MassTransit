@@ -16,11 +16,9 @@ namespace MassTransit.EventHubIntegration.Middleware
 
         public async Task Send(ProcessorContext context, IPipe<ProcessorContext> next)
         {
-            var inputAddress = _context.InputAddress;
+            var receiveSettings = _context.GetPayload<ReceiveSettings>();
 
-            IEventHubDataReceiver receiver = new EventHubDataReceiver(_context, context);
-
-            await receiver.Start().ConfigureAwait(false);
+            var receiver = new EventHubDataReceiver(receiveSettings, _context, context);
 
             await receiver.Ready.ConfigureAwait(false);
 
@@ -38,8 +36,7 @@ namespace MassTransit.EventHubIntegration.Middleware
 
                 await _context.TransportObservers.NotifyCompleted(_context.InputAddress, metrics).ConfigureAwait(false);
 
-                LogContext.Debug?.Log("Consumer completed {InputAddress}: {DeliveryCount} received, {ConcurrentDeliveryCount} concurrent", inputAddress,
-                    metrics.DeliveryCount, metrics.ConcurrentDeliveryCount);
+                _context.LogConsumerCompleted(metrics.DeliveryCount, metrics.ConcurrentDeliveryCount);
             }
 
             await next.Send(context).ConfigureAwait(false);

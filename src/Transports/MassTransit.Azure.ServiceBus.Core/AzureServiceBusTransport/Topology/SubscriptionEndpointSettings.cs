@@ -37,6 +37,10 @@ namespace MassTransit.AzureServiceBusTransport.Topology
 
         public override bool RequiresSession => _subscriptionConfigurator.RequiresSession ?? false;
 
+        public bool RemoveSubscriptions { get; set; }
+        public override int MaxConcurrentSessions => _subscriptionConfigurator.MaxConcurrentSessions ?? MaxConcurrentCalls;
+        public override int MaxConcurrentCallsPerSession => _subscriptionConfigurator.MaxConcurrentCallsPerSession ?? Defaults.MaxConcurrentCallsPerSessions;
+
         CreateTopicOptions SubscriptionSettings.CreateTopicOptions => _createTopicOptions;
         CreateSubscriptionOptions SubscriptionSettings.CreateSubscriptionOptions => _subscriptionConfigurator.GetCreateSubscriptionOptions();
 
@@ -45,19 +49,11 @@ namespace MassTransit.AzureServiceBusTransport.Topology
 
         public override string Path { get; }
 
-        public bool RemoveSubscriptions { get; set; }
-
         protected override IEnumerable<string> GetQueryStringOptions()
         {
             if (_subscriptionConfigurator.AutoDeleteOnIdle.HasValue && _subscriptionConfigurator.AutoDeleteOnIdle.Value > TimeSpan.Zero
                 && _subscriptionConfigurator.AutoDeleteOnIdle.Value != Defaults.AutoDeleteOnIdle)
                 yield return $"autodelete={_subscriptionConfigurator.AutoDeleteOnIdle.Value.TotalSeconds}";
-        }
-
-        public override void SelectBasicTier()
-        {
-            _subscriptionConfigurator.AutoDeleteOnIdle = default;
-            _subscriptionConfigurator.DefaultMessageTimeToLive = Defaults.BasicMessageTimeToLive;
         }
     }
 }

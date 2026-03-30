@@ -1,167 +1,58 @@
-﻿namespace MassTransit.AmazonSqsTransport
+﻿namespace MassTransit.AmazonSqsTransport;
+
+using System;
+using System.Collections.Generic;
+using Amazon.SQS;
+using Amazon.SQS.Model;
+using Context;
+using Transports;
+
+
+public sealed class AmazonSqsReceiveContext :
+    BaseReceiveContext,
+    AmazonSqsMessageContext,
+    TransportReceiveContext
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using Amazon.SQS;
-    using Amazon.SQS.Model;
-    using Internals;
-    using Topology;
-    using Transports;
+    readonly AmazonSqsHeaderProvider _headerProvider;
 
-
-    public sealed class AmazonSqsReceiveContext :
-        BaseReceiveContext,
-        AmazonSqsMessageContext,
-        ReceiveLockContext
+    public AmazonSqsReceiveContext(Message message, bool redelivered, SqsReceiveEndpointContext? context, ClientContext clientContext,
+        ReceiveSettings settings, ConnectionContext connectionContext)
+        : base(redelivered, context, settings, clientContext, connectionContext)
     {
-        static readonly TimeSpan MaxVisibilityTimeout = TimeSpan.FromHours(12);
+        TransportMessage = message;
+        TransportMessage.MessageAttributes ??= new Dictionary<string, MessageAttributeValue>();
+        TransportMessage.Attributes ??= new Dictionary<string, string>();
 
-        readonly CancellationTokenSource _activeTokenSource;
-        readonly ClientContext _clientContext;
-        readonly SqsReceiveEndpointContext _context;
-        readonly ReceiveSettings _receiveSettings;
-        bool _locked;
+        var messageBody = new SqsMessageBody(message);
 
-        public AmazonSqsReceiveContext(Message transportMessage, bool redelivered, SqsReceiveEndpointContext context,
-            ClientContext clientContext, ReceiveSettings receiveSettings, ConnectionContext connectionContext)
-            : base(redelivered, context, receiveSettings, clientContext, connectionContext)
+        Body = messageBody;
+
+        _headerProvider = new AmazonSqsHeaderProvider(TransportMessage, messageBody);
+    }
+
+    protected override IHeaderProvider HeaderProvider => _headerProvider;
+
+    public override MessageBody Body { get; }
+
+    public Message TransportMessage { get; }
+
+    public Dictionary<string, MessageAttributeValue> Attributes => TransportMessage.MessageAttributes;
+
+    public IDictionary<string, object> GetTransportProperties()
+    {
+        var properties = new Lazy<Dictionary<string, object>>(() => new Dictionary<string, object>());
+
+        if (TransportMessage.Attributes != null)
         {
-            _context = context;
-            _clientContext = clientContext;
-            _receiveSettings = receiveSettings;
+            if (TransportMessage.Attributes.TryGetValue(MessageSystemAttributeName.MessageGroupId, out var messageGroupId)
+                && !string.IsNullOrWhiteSpace(messageGroupId))
+                properties.Value[AmazonSqsTransportPropertyNames.GroupId] = messageGroupId;
 
-            TransportMessage = transportMessage;
-
-            Body = new StringMessageBody(transportMessage?.Body);
-
-            _activeTokenSource = new CancellationTokenSource();
-            _locked = true;
-
-            Task.Factory.StartNew(RenewMessageVisibility, _activeTokenSource.Token, TaskCreationOptions.None, TaskScheduler.Default);
+            if (TransportMessage.Attributes.TryGetValue(MessageSystemAttributeName.MessageDeduplicationId, out var messageDeduplicationId)
+                && !string.IsNullOrWhiteSpace(messageDeduplicationId))
+                properties.Value[AmazonSqsTransportPropertyNames.DeduplicationId] = messageDeduplicationId;
         }
 
-        protected override IHeaderProvider HeaderProvider => new AmazonSqsHeaderProvider(TransportMessage);
-
-        public override MessageBody Body { get; }
-
-        public Message TransportMessage { get; }
-
-        public Dictionary<string, MessageAttributeValue> Attributes => TransportMessage.MessageAttributes;
-
-        public Task Complete()
-        {
-            _activeTokenSource.Cancel();
-
-            return _clientContext.DeleteMessage(_receiveSettings.EntityName, TransportMessage.ReceiptHandle);
-        }
-
-        public async Task Faulted(Exception exception)
-        {
-            _activeTokenSource.Cancel();
-
-            try
-            {
-                // return message to available message pool immediately
-                await _clientContext.ChangeMessageVisibility(_receiveSettings.QueueUrl, TransportMessage.ReceiptHandle, 0).ConfigureAwait(false);
-                _locked = false;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception ex)
-            {
-                LogContext.Error?.Log(ex, "ChangeMessageVisibility failed: {ReceiptHandle}, Original Exception: {Exception}", TransportMessage.ReceiptHandle,
-                    exception);
-            }
-        }
-
-        public Task ValidateLockStatus()
-        {
-            if (_locked)
-                return Task.CompletedTask;
-
-            throw new TransportException(_context.InputAddress, $"Message Lock Lost: {TransportMessage.ReceiptHandle}");
-        }
-
-        public override void Dispose()
-        {
-            _activeTokenSource.Dispose();
-
-            base.Dispose();
-        }
-
-        async Task RenewMessageVisibility()
-        {
-            TimeSpan CalculateDelay(int timeout)
-            {
-                return TimeSpan.FromSeconds(timeout * 0.7);
-            }
-
-            var visibilityTimeout = _receiveSettings.VisibilityTimeout;
-
-            var delay = CalculateDelay(visibilityTimeout);
-
-            visibilityTimeout = Math.Min(60, visibilityTimeout);
-
-            while (_activeTokenSource.Token.IsCancellationRequested == false)
-            {
-                try
-                {
-                    if (delay > TimeSpan.Zero)
-                        await Task.Delay(delay, _activeTokenSource.Token).ConfigureAwait(false);
-
-                    if (_activeTokenSource.Token.IsCancellationRequested)
-                        break;
-
-                    await _clientContext.ChangeMessageVisibility(_receiveSettings.QueueUrl, TransportMessage.ReceiptHandle, visibilityTimeout)
-                        .ConfigureAwait(false);
-
-                    // Max 12 hours, https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
-                    if (ElapsedTime + TimeSpan.FromSeconds(visibilityTimeout) >= MaxVisibilityTimeout)
-                        break;
-
-                    delay = CalculateDelay(visibilityTimeout);
-                }
-                catch (MessageNotInflightException exception)
-                {
-                    LogContext.Warning?.Log(exception, "Message no longer in flight: {ReceiptHandle}", TransportMessage.ReceiptHandle);
-
-                    _locked = false;
-
-                    Cancel();
-                    break;
-                }
-                catch (ReceiptHandleIsInvalidException exception)
-                {
-                    LogContext.Warning?.Log(exception, "Message receipt handle is invalid: {ReceiptHandle}", TransportMessage.ReceiptHandle);
-
-                    _locked = false;
-
-                    Cancel();
-                    break;
-                }
-                catch (AmazonSQSException exception)
-                {
-                    LogContext.Error?.Log(exception, "Failed to extend message {ReceiptHandle} visibility to {VisibilityTimeout} ({ElapsedTime})",
-                        TransportMessage.ReceiptHandle, TimeSpan.FromSeconds(visibilityTimeout).ToFriendlyString(), ElapsedTime);
-
-                    break;
-                }
-                catch (TimeoutException)
-                {
-                    delay = TimeSpan.Zero;
-                }
-                catch (OperationCanceledException)
-                {
-                    _activeTokenSource.Cancel();
-                }
-                catch (Exception)
-                {
-                    _activeTokenSource.Cancel();
-                }
-            }
-        }
+        return properties.IsValueCreated ? properties.Value : null!;
     }
 }

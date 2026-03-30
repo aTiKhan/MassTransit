@@ -1,6 +1,7 @@
 ﻿namespace MassTransit.AzureServiceBusTransport
 {
     using System;
+    using System.Collections.Generic;
     using System.Threading;
     using Context;
 
@@ -26,6 +27,9 @@
         ServiceBusSendContext<T>
         where T : class
     {
+        string _partitionKey;
+        string _sessionId;
+
         public AzureServiceBusSendContext(T message, CancellationToken cancellationToken)
             : base(message, cancellationToken)
         {
@@ -38,12 +42,35 @@
         }
 
         public string ReplyToSessionId { get; set; }
+        public string ReplyTo { get; set; }
 
         public DateTime? ScheduledEnqueueTimeUtc { get; set; }
 
-        public string PartitionKey { get; set; }
+        public string Label { get; set; }
 
-        public string SessionId { get; set; }
+        public string PartitionKey
+        {
+            get => _partitionKey;
+            set
+            {
+                _partitionKey = value;
+
+                if (string.IsNullOrWhiteSpace(_sessionId) || _sessionId.Equals(value))
+                    return;
+
+                _sessionId = null;
+            }
+        }
+
+        public string SessionId
+        {
+            get => _sessionId;
+            set
+            {
+                _partitionKey = value;
+                _sessionId = value;
+            }
+        }
 
         public void SetScheduledMessageId(long sequenceNumber)
         {
@@ -84,9 +111,45 @@
             return false;
         }
 
-        public long GetSequenceNumber(Guid scheduledMessageId)
+        public override void ReadPropertiesFrom(IReadOnlyDictionary<string, object> properties)
         {
-            return BitConverter.ToInt64(scheduledMessageId.ToByteArray(), 0);
+            base.ReadPropertiesFrom(properties);
+
+            var partitionKey = ReadString(properties, AzureServiceBusTransportPropertyNames.PartitionKey);
+            if (!string.IsNullOrWhiteSpace(partitionKey))
+                PartitionKey = partitionKey;
+
+            var sessionId = ReadString(properties, AzureServiceBusTransportPropertyNames.SessionId);
+            if (!string.IsNullOrWhiteSpace(sessionId))
+                SessionId = sessionId;
+
+            var replyToSessionId = ReadString(properties, AzureServiceBusTransportPropertyNames.ReplyToSessionId);
+            if (!string.IsNullOrWhiteSpace(replyToSessionId))
+                ReplyToSessionId = replyToSessionId;
+
+            var replyTo = ReadString(properties, AzureServiceBusTransportPropertyNames.ReplyTo);
+            if (!string.IsNullOrWhiteSpace(replyTo))
+                ReplyTo = replyTo;
+
+            var label = ReadString(properties, AzureServiceBusTransportPropertyNames.Label);
+            if (!string.IsNullOrWhiteSpace(label))
+                Label = label;
+        }
+
+        public override void WritePropertiesTo(IDictionary<string, object> properties)
+        {
+            base.WritePropertiesTo(properties);
+
+            if (!string.IsNullOrWhiteSpace(PartitionKey))
+                properties[AzureServiceBusTransportPropertyNames.PartitionKey] = PartitionKey;
+            if (!string.IsNullOrWhiteSpace(SessionId))
+                properties[AzureServiceBusTransportPropertyNames.SessionId] = SessionId;
+            if (!string.IsNullOrWhiteSpace(ReplyToSessionId))
+                properties[AzureServiceBusTransportPropertyNames.ReplyToSessionId] = ReplyToSessionId;
+            if (!string.IsNullOrWhiteSpace(ReplyTo))
+                properties[AzureServiceBusTransportPropertyNames.ReplyTo] = ReplyTo;
+            if (!string.IsNullOrWhiteSpace(Label))
+                properties[AzureServiceBusTransportPropertyNames.Label] = Label;
         }
     }
 }

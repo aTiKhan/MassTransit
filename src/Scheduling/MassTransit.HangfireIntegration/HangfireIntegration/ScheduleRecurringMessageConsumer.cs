@@ -13,28 +13,24 @@ namespace MassTransit.HangfireIntegration
         readonly IRecurringJobManager _recurringJobManager;
         readonly ITimeZoneResolver _timeZoneResolver;
 
-        ScheduleRecurringMessageConsumer(IRecurringJobManager recurringJobManager, ITimeZoneResolver timeZoneResolver)
+        public ScheduleRecurringMessageConsumer(IRecurringJobManager recurringJobManager, ITimeZoneResolver timeZoneResolver)
         {
             _recurringJobManager = recurringJobManager;
             _timeZoneResolver = timeZoneResolver;
         }
 
-        public ScheduleRecurringMessageConsumer(IHangfireComponentResolver hangfireComponentResolver)
-            : this(hangfireComponentResolver.RecurringJobManager, hangfireComponentResolver.TimeZoneResolver)
+        public Task Consume(ConsumeContext<CancelScheduledRecurringMessage> context)
         {
-        }
-
-        public async Task Consume(ConsumeContext<CancelScheduledRecurringMessage> context)
-        {
-            var jobKey = GetJobKey(context.Message.ScheduleId, context.Message.ScheduleGroup);
+            var jobKey = JobKey.Create(context.Message.ScheduleId, context.Message.ScheduleGroup);
             _recurringJobManager.RemoveIfExists(jobKey);
 
             LogContext.Debug?.Log("Canceled Recurring Message: {Key}", jobKey);
+            return Task.CompletedTask;
         }
 
-        public async Task Consume(ConsumeContext<ScheduleRecurringMessage> context)
+        public Task Consume(ConsumeContext<ScheduleRecurringMessage> context)
         {
-            var jobKey = GetJobKey(context.Message.Schedule.ScheduleId, context.Message.Schedule.ScheduleGroup);
+            var jobKey = JobKey.Create(context.Message.Schedule.ScheduleId, context.Message.Schedule.ScheduleGroup);
             var message = HangfireRecurringScheduledMessageData.Create(context, jobKey);
 
             var tz = TimeZoneInfo.Local;
@@ -45,16 +41,10 @@ namespace MassTransit.HangfireIntegration
                 jobKey,
                 x => x.SendMessage(message, null!),
                 context.Message.Schedule.CronExpression,
-                tz);
+                new RecurringJobOptions { TimeZone = tz });
 
             LogContext.Debug?.Log("Scheduled: {Key}", jobKey);
-        }
-
-        static string GetJobKey(string scheduleId, string scheduleGroup)
-        {
-            return string.IsNullOrEmpty(scheduleGroup)
-                ? scheduleId
-                : $"{scheduleId}-{scheduleGroup}";
+            return Task.CompletedTask;
         }
     }
 }

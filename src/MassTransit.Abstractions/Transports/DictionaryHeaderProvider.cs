@@ -1,6 +1,7 @@
 namespace MassTransit.Transports
 {
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
 
 
     /// <summary>
@@ -21,7 +22,7 @@ namespace MassTransit.Transports
             return _headers;
         }
 
-        public bool TryGetHeader(string key, out object value)
+        public bool TryGetHeader(string key, [NotNullWhen(true)] out object? value)
         {
             return _headers.TryGetValue(key, out value);
         }

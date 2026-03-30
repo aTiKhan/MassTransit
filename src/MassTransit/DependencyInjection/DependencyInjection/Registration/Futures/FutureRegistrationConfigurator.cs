@@ -2,7 +2,6 @@ namespace MassTransit.DependencyInjection.Registration
 {
     using System;
     using Configuration;
-    using Futures;
 
 
     public class FutureRegistrationConfigurator<TFuture> :
@@ -10,10 +9,12 @@ namespace MassTransit.DependencyInjection.Registration
         where TFuture : class, SagaStateMachine<FutureState>
     {
         readonly IRegistrationConfigurator _configurator;
+        readonly IFutureRegistration _registration;
 
-        public FutureRegistrationConfigurator(IRegistrationConfigurator configurator)
+        public FutureRegistrationConfigurator(IRegistrationConfigurator configurator, IFutureRegistration registration)
         {
             _configurator = configurator;
+            _registration = registration;
         }
 
         IFutureRegistrationConfigurator IFutureRegistrationConfigurator.Endpoint(Action<IEndpointRegistrationConfigurator> configure)
@@ -21,13 +22,21 @@ namespace MassTransit.DependencyInjection.Registration
             return Endpoint(configure);
         }
 
+        public void ExcludeFromConfigureEndpoints()
+        {
+            _registration.IncludeInConfigureEndpoints = false;
+        }
+
         public IFutureRegistrationConfigurator<TFuture> Endpoint(Action<IEndpointRegistrationConfigurator> configure)
         {
+            if (!_registration.IncludeInConfigureEndpoints)
+                throw new ConfigurationException("Feature is excluded from ConfigureEndpoints");
+
             var configurator = new EndpointRegistrationConfigurator<TFuture>();
 
             configure?.Invoke(configurator);
 
-            _configurator.AddEndpoint<FutureEndpointDefinition<TFuture>, TFuture>(configurator.Settings);
+            _configurator.AddEndpoint<FutureEndpointDefinition<TFuture>, TFuture>(_registration, configurator.Settings);
 
             return this;
         }

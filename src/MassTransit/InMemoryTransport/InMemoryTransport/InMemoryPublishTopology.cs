@@ -26,9 +26,14 @@ namespace MassTransit.InMemoryTransport
             return GetMessageTopology<T>() as IInMemoryMessagePublishTopologyConfigurator<T>;
         }
 
-        protected override IMessagePublishTopologyConfigurator CreateMessageTopology<T>(Type type)
+        IInMemoryMessagePublishTopologyConfigurator IInMemoryPublishTopologyConfigurator.GetMessageTopology(Type messageType)
         {
-            var topology = new InMemoryMessagePublishTopology<T>(_messageTopology.GetMessageTopology<T>());
+            return GetMessageTopology(messageType) as IInMemoryMessagePublishTopologyConfigurator;
+        }
+
+        protected override IMessagePublishTopologyConfigurator CreateMessageTopology<T>()
+        {
+            var topology = new InMemoryMessagePublishTopology<T>(this, _messageTopology.GetMessageTopology<T>());
 
             var connector = new ImplementedMessageTypeConnector<T>(this, topology);
 

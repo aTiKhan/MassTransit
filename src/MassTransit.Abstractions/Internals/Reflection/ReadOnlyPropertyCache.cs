@@ -3,15 +3,9 @@ namespace MassTransit.Internals
     using System;
     using System.Collections;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Linq.Expressions;
-
-
-    public interface IReadOnlyPropertyCache<T> :
-        IEnumerable<ReadOnlyProperty<T>>
-    {
-        bool TryGetValue(string key, out ReadOnlyProperty<T> value);
-    }
 
 
     public class ReadOnlyPropertyCache<T> :
@@ -34,7 +28,7 @@ namespace MassTransit.Internals
             return GetEnumerator();
         }
 
-        public bool TryGetValue(string key, out ReadOnlyProperty<T> value)
+        public bool TryGetValue(string key, [NotNullWhen(true)] out ReadOnlyProperty<T>? value)
         {
             try
             {

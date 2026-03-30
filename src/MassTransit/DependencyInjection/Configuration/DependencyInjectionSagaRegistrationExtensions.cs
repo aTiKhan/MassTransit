@@ -4,7 +4,6 @@ namespace MassTransit.Configuration
     using DependencyInjection.Registration;
     using Internals;
     using Microsoft.Extensions.DependencyInjection;
-    using Microsoft.Extensions.DependencyInjection.Extensions;
 
 
     public static class DependencyInjectionSagaRegistrationExtensions
@@ -21,7 +20,7 @@ namespace MassTransit.Configuration
             if (typeof(T).HasInterface<SagaStateMachineInstance>())
                 throw new ArgumentException($"State machine sagas must be registered using RegisterSagaStateMachine: {TypeCache<T>.ShortName}");
 
-            return new Saga<T>().Register(collection, registrar);
+            return new SagaRegistrar<T>().Register(collection, registrar);
         }
 
         public static ISagaRegistration RegisterSaga<T, TDefinition>(this IServiceCollection collection)
@@ -38,7 +37,7 @@ namespace MassTransit.Configuration
             if (typeof(T).HasInterface<SagaStateMachineInstance>())
                 throw new ArgumentException($"State machine sagas must be registered using RegisterSagaStateMachine: {TypeCache<T>.ShortName}");
 
-            return new SagaDefinition<T, TDefinition>().Register(collection, registrar);
+            return new SagaDefinitionRegistrar<T, TDefinition>().Register(collection, registrar);
         }
 
         public static ISagaRegistration RegisterSaga<T>(this IServiceCollection collection, Type sagaDefinitionType)
@@ -62,31 +61,55 @@ namespace MassTransit.Configuration
                     nameof(sagaDefinitionType));
             }
 
-            var register = (IRegister)Activator.CreateInstance(typeof(SagaDefinition<,>).MakeGenericType(typeof(T), sagaDefinitionType));
+            var register = (ISagaRegistrar)Activator.CreateInstance(typeof(SagaDefinitionRegistrar<,>).MakeGenericType(typeof(T), sagaDefinitionType));
+
+            return register.Register(collection, registrar);
+        }
+
+        public static ISagaRegistration RegisterSaga(this IServiceCollection collection, IContainerRegistrar registrar, Type sagaType,
+            Type sagaDefinitionType = null)
+        {
+            if (sagaType.HasInterface<SagaStateMachineInstance>())
+                throw new ArgumentException($"State machine sagas must be registered using RegisterSagaStateMachine: {TypeCache.GetShortName(sagaType)}");
+
+            if (sagaDefinitionType != null)
+            {
+                if (!sagaDefinitionType.ClosesType(typeof(ISagaDefinition<>), out Type[] types) || types[0] != sagaType)
+                {
+                    throw new ArgumentException($"{TypeCache.GetShortName(sagaDefinitionType)} is not a saga definition of {TypeCache.GetShortName(sagaType)}",
+                        nameof(sagaDefinitionType));
+                }
+
+                var sagaRegistrar = (ISagaRegistrar)Activator.CreateInstance(typeof(SagaDefinitionRegistrar<,>).MakeGenericType(sagaType, sagaDefinitionType));
+
+                return sagaRegistrar.Register(collection, registrar);
+            }
+
+            var register = (ISagaRegistrar)Activator.CreateInstance(typeof(SagaRegistrar<>).MakeGenericType(sagaType));
 
             return register.Register(collection, registrar);
         }
 
 
-        interface IRegister
+        interface ISagaRegistrar
         {
             ISagaRegistration Register(IServiceCollection collection, IContainerRegistrar registrar);
         }
 
 
-        class Saga<TSaga> :
-            IRegister
+        class SagaRegistrar<TSaga> :
+            ISagaRegistrar
             where TSaga : class, ISaga
         {
             public virtual ISagaRegistration Register(IServiceCollection collection, IContainerRegistrar registrar)
             {
-                return registrar.GetOrAdd<ISagaRegistration>(typeof(TSaga), _ => new SagaRegistration<TSaga>());
+                return registrar.GetOrAddRegistration<ISagaRegistration>(typeof(TSaga), _ => new SagaRegistration<TSaga>(registrar));
             }
         }
 
 
-        class SagaDefinition<TSaga, TDefinition> :
-            Saga<TSaga>
+        class SagaDefinitionRegistrar<TSaga, TDefinition> :
+            SagaRegistrar<TSaga>
             where TDefinition : class, ISagaDefinition<TSaga>
             where TSaga : class, ISaga
         {
@@ -94,8 +117,7 @@ namespace MassTransit.Configuration
             {
                 var registration = base.Register(collection, registrar);
 
-                collection.TryAddSingleton<TDefinition>();
-                collection.TryAddSingleton<ISagaDefinition<TSaga>>(provider => provider.GetRequiredService<TDefinition>());
+                registrar.AddDefinition<ISagaDefinition<TSaga>, TDefinition>();
 
                 return registration;
             }

@@ -14,11 +14,17 @@ namespace MassTransit.Transports
         static readonly LogMessage<Uri, Guid?, string, string, TimeSpan> _logConsumeFault = LogContext.Define<Uri, Guid?, string, string, TimeSpan>(
             LogLevel.Error, "R-FAULT {InputAddress} {MessageId} {MessageType} {ConsumerType}({Duration})");
 
+        static readonly LogMessage<Uri, Guid?, string, string, TimeSpan> _logConsumeCanceled = LogContext.Define<Uri, Guid?, string, string, TimeSpan>(
+            LogLevel.Information, "R-CANCEL {InputAddress} {MessageId} {MessageType} {ConsumerType}({Duration})");
+
         static readonly LogMessage<Uri, string, string, string> _logMoved = LogContext.DefineMessage<Uri, string, string, string>(LogLevel.Information,
             "MOVE {InputAddress} {MessageId} {DestinationAddress} {Reason}");
 
         static readonly LogMessage<Uri, string, TimeSpan> _logReceiveFault = LogContext.Define<Uri, string, TimeSpan>(LogLevel.Error,
             "R-FAULT {InputAddress} {MessageId} {Duration}");
+
+        static readonly LogMessage<Uri, string, object> _logReceiveDupe = LogContext.Define<Uri, string, object>(LogLevel.Warning,
+            "R-DUPE {InputAddress} {MessageId} {TransportMessageId}");
 
         static readonly LogMessage<Uri, Guid?, string> _logSent = LogContext.DefineMessage<Uri, Guid?, string>(LogLevel.Debug,
             "SEND {DestinationAddress} {MessageId} {MessageType}");
@@ -37,6 +43,12 @@ namespace MassTransit.Transports
 
         static readonly LogMessage<Uri, Guid?, string, DateTime, Guid?> _logScheduled = LogContext.DefineMessage<Uri, Guid?, string, DateTime, Guid?>(
             LogLevel.Debug, "SCHED {DestinationAddress} {MessageId} {MessageType} {DeliveryTime:G} {Token}");
+
+        static readonly LogMessage<Uri, long, int> _logConsumerCompleted = LogContext.DefineMessage<Uri, long, int>(
+            LogLevel.Debug, "Consumer Completed: {InputAddress}: {DeliveryCount} received, {ConcurrentDeliveryCount} concurrent");
+
+        static readonly LogMessage<Uri, long, int, string> _logConsumerCompletedTag = LogContext.DefineMessage<Uri, long, int, string>(
+            LogLevel.Debug, "Consumer Completed: {InputAddress}: {DeliveryCount} received, {ConcurrentDeliveryCount} concurrent, {Tag}");
 
         /// <summary>
         /// Log a skipped message that was moved to the dead-letter queue
@@ -82,14 +94,30 @@ namespace MassTransit.Transports
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void LogCanceled<T>(this ConsumeContext<T> context, TimeSpan duration, string consumerType)
+            where T : class
+        {
+            _logConsumeCanceled(context.ReceiveContext.InputAddress, context.MessageId, TypeCache<T>.ShortName, consumerType, duration);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void LogFaulted(this ReceiveContext context, Exception exception)
         {
             _logReceiveFault(context.InputAddress, GetMessageId(context), context.ElapsedTime, exception);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void LogTransportDupe<TTransportMessageId>(this ReceiveContext context, TTransportMessageId transportMessageId)
+        {
+            _logReceiveDupe(context.InputAddress, GetMessageId(context), transportMessageId);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void LogTransportFaulted(this ReceiveContext context, Exception exception)
         {
+            if (exception.GetBaseException() is OperationCanceledException && context.CancellationToken.IsCancellationRequested)
+                return;
+
             _logFault(context.InputAddress, GetMessageId(context), exception);
         }
 
@@ -118,6 +146,18 @@ namespace MassTransit.Transports
             where T : class
         {
             _logSent(context.DestinationAddress, context.MessageId, TypeCache<T>.ShortName);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void LogConsumerCompleted(this ReceiveEndpointContext context, long deliveryCount, int concurrentDeliveryCount)
+        {
+            _logConsumerCompleted(context.InputAddress, deliveryCount, concurrentDeliveryCount);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void LogConsumerCompleted(this ReceiveEndpointContext context, long deliveryCount, int concurrentDeliveryCount, string tag)
+        {
+            _logConsumerCompletedTag(context.InputAddress, deliveryCount, concurrentDeliveryCount, tag);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

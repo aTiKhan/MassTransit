@@ -1,93 +1,98 @@
-namespace MassTransit.AmazonSqsTransport
+namespace MassTransit.AmazonSqsTransport;
+
+using System;
+using System.Collections.Concurrent;
+using System.Text;
+using Transports;
+
+
+public class AmazonSqsMessageNameFormatter :
+    IMessageNameFormatter
 {
-    using System;
-    using System.Collections.Concurrent;
-    using System.Reflection;
-    using System.Text;
-    using Transports;
+    readonly ConcurrentDictionary<Type, string> _cache;
+    readonly string _genericArgumentSeparator;
+    readonly string _genericTypeSeparator;
+    readonly bool _includeNamespace;
+    readonly string _namespaceSeparator;
+    readonly string _nestedTypeSeparator;
 
-
-    public class AmazonSqsMessageNameFormatter :
-        IMessageNameFormatter
+    public AmazonSqsMessageNameFormatter(string? genericArgumentSeparator = null, string? genericTypeSeparator = null,
+        string? namespaceSeparator = null, string? nestedTypeSeparator = null)
+        : this(true, genericArgumentSeparator, genericTypeSeparator, namespaceSeparator, nestedTypeSeparator)
     {
-        readonly ConcurrentDictionary<Type, string> _cache;
-        readonly string _genericArgumentSeparator;
-        readonly string _genericTypeSeparator;
-        readonly string _namespaceSeparator;
-        readonly string _nestedTypeSeparator;
+    }
 
-        public AmazonSqsMessageNameFormatter(string genericArgumentSeparator = null, string genericTypeSeparator = null,
-            string namespaceSeparator = null, string nestedTypeSeparator = null)
+    public AmazonSqsMessageNameFormatter(bool includeNamespace, string? genericArgumentSeparator = null,
+        string? genericTypeSeparator = null, string? namespaceSeparator = null, string? nestedTypeSeparator = null)
+    {
+        _genericArgumentSeparator = genericArgumentSeparator ?? "__";
+        _genericTypeSeparator = genericTypeSeparator ?? "--";
+        _namespaceSeparator = namespaceSeparator ?? "-";
+        _nestedTypeSeparator = nestedTypeSeparator ?? "_";
+        _includeNamespace = includeNamespace;
+
+        _cache = new ConcurrentDictionary<Type, string>();
+    }
+
+    public string GetMessageName(Type type)
+    {
+        return _cache.GetOrAdd(type, CreateMessageName);
+    }
+
+    string CreateMessageName(Type type)
+    {
+        if (type.IsGenericTypeDefinition)
+            throw new ArgumentException("An open generic type cannot be used as a message name");
+
+        var sb = new StringBuilder("");
+
+        return GetMessageName(sb, type, null);
+    }
+
+    string GetMessageName(StringBuilder sb, Type type, string? scope)
+    {
+        if (type.IsGenericParameter)
+            return "";
+
+        var ns = type.Namespace?.Replace(".", _nestedTypeSeparator);
+        if (ns != null && _includeNamespace && !ns.Equals(scope))
         {
-            _genericArgumentSeparator = genericArgumentSeparator ?? "__";
-            _genericTypeSeparator = genericTypeSeparator ?? "--";
-            _namespaceSeparator = namespaceSeparator ?? "-";
-            _nestedTypeSeparator = nestedTypeSeparator ?? "_";
-
-            _cache = new ConcurrentDictionary<Type, string>();
+            sb.Append(ns);
+            sb.Append(_namespaceSeparator);
         }
 
-        public MessageName GetMessageName(Type type)
+        if (type is { IsNested: true, DeclaringType: not null })
         {
-            return new MessageName(_cache.GetOrAdd(type, CreateMessageName));
+            GetMessageName(sb, type.DeclaringType, ns);
+            sb.Append(_nestedTypeSeparator);
         }
 
-        string CreateMessageName(Type type)
+        if (type.IsGenericType)
         {
-            if (type.GetTypeInfo().IsGenericTypeDefinition)
-                throw new ArgumentException("An open generic type cannot be used as a message name");
+            var name = type.GetGenericTypeDefinition().Name;
 
-            var sb = new StringBuilder("");
+            //remove `1
+            var index = name.IndexOf('`');
+            if (index > 0)
+                name = name.Remove(index);
 
-            return GetMessageName(sb, type, null);
-        }
+            sb.Append(name);
+            sb.Append(_genericTypeSeparator);
 
-        string GetMessageName(StringBuilder sb, Type type, string scope)
-        {
-            var typeInfo = type.GetTypeInfo();
-            if (typeInfo.IsGenericParameter)
-                return "";
-
-            var ns = typeInfo.Namespace?.Replace(".", _nestedTypeSeparator);
-            if (ns != null && !ns.Equals(scope))
+            Type[] arguments = type.GetGenericArguments();
+            for (var i = 0; i < arguments.Length; i++)
             {
-                sb.Append(ns);
-                sb.Append(_namespaceSeparator);
+                if (i > 0)
+                    sb.Append(_genericArgumentSeparator);
+
+                GetMessageName(sb, arguments[i], ns);
             }
 
-            if (typeInfo.IsNested)
-            {
-                GetMessageName(sb, typeInfo.DeclaringType, ns);
-                sb.Append(_nestedTypeSeparator);
-            }
-
-            if (typeInfo.IsGenericType)
-            {
-                var name = typeInfo.GetGenericTypeDefinition().Name;
-
-                //remove `1
-                var index = name.IndexOf('`');
-                if (index > 0)
-                    name = name.Remove(index);
-
-                sb.Append(name);
-                sb.Append(_genericTypeSeparator);
-
-                Type[] arguments = typeInfo.GetGenericArguments();
-                for (var i = 0; i < arguments.Length; i++)
-                {
-                    if (i > 0)
-                        sb.Append(_genericArgumentSeparator);
-
-                    GetMessageName(sb, arguments[i], ns);
-                }
-
-                sb.Append(_genericTypeSeparator);
-            }
-            else
-                sb.Append(typeInfo.Name);
-
-            return sb.ToString();
+            sb.Append(_genericTypeSeparator);
         }
+        else
+            sb.Append(type.Name);
+
+        return sb.ToString();
     }
 }

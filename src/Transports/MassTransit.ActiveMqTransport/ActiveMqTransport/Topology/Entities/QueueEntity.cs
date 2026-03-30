@@ -8,21 +8,21 @@ namespace MassTransit.ActiveMqTransport.Topology
         Queue,
         QueueHandle
     {
-        public QueueEntity(long id, string name, bool autoDelete, bool lazy = false)
+        public QueueEntity(long id, string name, bool durable, bool autoDelete)
         {
             Id = id;
             EntityName = name;
             AutoDelete = autoDelete;
-            Lazy = lazy;
+            Durable = durable;
         }
 
         public static IEqualityComparer<QueueEntity> NameComparer { get; } = new NameEqualityComparer();
 
         public static IEqualityComparer<QueueEntity> QueueComparer { get; } = new QueueEntityEqualityComparer();
-        public bool Lazy { get; }
 
         public string EntityName { get; }
         public bool AutoDelete { get; }
+        public bool Durable { get; }
         public long Id { get; }
         public Queue Queue => this;
 
@@ -45,7 +45,7 @@ namespace MassTransit.ActiveMqTransport.Topology
                     return false;
                 if (x.GetType() != y.GetType())
                     return false;
-                return string.Equals(x.EntityName, y.EntityName) && x.AutoDelete == y.AutoDelete;
+                return string.Equals(x.EntityName, y.EntityName) && x.AutoDelete == y.AutoDelete && x.Durable == y.Durable;
             }
 
             public int GetHashCode(QueueEntity obj)
@@ -54,6 +54,7 @@ namespace MassTransit.ActiveMqTransport.Topology
                 {
                     var hashCode = obj.EntityName.GetHashCode();
                     hashCode = (hashCode * 397) ^ obj.AutoDelete.GetHashCode();
+                    hashCode = (hashCode * 397) ^ obj.Durable.GetHashCode(); //TODO
                     return hashCode;
                 }
             }

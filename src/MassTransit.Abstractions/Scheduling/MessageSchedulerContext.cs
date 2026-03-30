@@ -8,6 +8,8 @@ namespace MassTransit
     public interface MessageSchedulerContext :
         IMessageScheduler
     {
+        MessageSchedulerFactory SchedulerFactory { get; }
+
         /// <summary>
         /// Send a message
         /// </summary>
@@ -64,8 +66,7 @@ namespace MassTransit
         Task<ScheduledMessage> ScheduleSend(DateTime scheduledTime, object message, Type messageType, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Sends an object as a message, using the message type specified. If the object cannot be cast
-        /// to the specified message type, an exception will be thrown.
+        /// Sends an object as a message.
         /// </summary>
         /// <param name="scheduledTime">The time at which the message should be delivered to the queue</param>
         /// <param name="message">The message object</param>

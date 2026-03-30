@@ -18,9 +18,6 @@ namespace MassTransit
         /// by the generic parameter. The second parameter allows the caller to customize the
         /// outgoing publish context and set things like headers on the message.
         /// </para>
-        /// <para>
-        /// Read up on publishing: http://readthedocs.org/docs/masstransit/en/latest/overview/publishing.html
-        /// </para>
         /// </summary>
         /// <typeparam name="T">The type of the message</typeparam>
         /// <param name="message">The messages to be published</param>
@@ -33,9 +30,6 @@ namespace MassTransit
         /// Publishes a message to all subscribed consumers for the message type as specified
         /// by the generic parameter. The second parameter allows the caller to customize the
         /// outgoing publish context and set things like headers on the message.
-        /// </para>
-        /// <para>
-        /// Read up on publishing: http://readthedocs.org/docs/masstransit/en/latest/overview/publishing.html
         /// </para>
         /// </summary>
         /// <typeparam name="T">The type of the message</typeparam>
@@ -51,9 +45,6 @@ namespace MassTransit
         /// by the generic parameter. The second parameter allows the caller to customize the
         /// outgoing publish context and set things like headers on the message.
         /// </para>
-        /// <para>
-        /// Read up on publishing: http://readthedocs.org/docs/masstransit/en/latest/overview/publishing.html
-        /// </para>
         /// </summary>
         /// <typeparam name="T">The type of the message</typeparam>
         /// <param name="message">The messages to be published</param>
@@ -63,16 +54,14 @@ namespace MassTransit
             where T : class;
 
         /// <summary>
-        /// Publishes an object as a message, using the message type specified. If the object cannot be cast
-        /// to the specified message type, an exception will be thrown.
+        /// Publishes an object as a message.
         /// </summary>
         /// <param name="message">The message object</param>
         /// <param name="cancellationToken"></param>
         Task Publish(object message, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Publishes an object as a message, using the message type specified. If the object cannot be cast
-        /// to the specified message type, an exception will be thrown.
+        /// Publishes an object as a message.
         /// </summary>
         /// <param name="message">The message object</param>
         /// <param name="publishPipe"></param>
@@ -107,12 +96,10 @@ namespace MassTransit
         /// in the background.
         /// </summary>
         /// <typeparam name="T">
-        /// The type of the interface or
-        /// non-sealed class with all-virtual members.
+        /// The type of the interface or non-sealed class with all-virtual members.
         /// </typeparam>
         /// <param name="values">
-        /// The dictionary of values to place in the
-        /// object instance to implement the interface.
+        /// The dictionary of values to place in the object instance to implement the interface.
         /// </param>
         /// <param name="cancellationToken"></param>
         Task Publish<T>(object values, CancellationToken cancellationToken = default)
@@ -125,8 +112,7 @@ namespace MassTransit
         /// </summary>
         /// <typeparam name="T">The type of the message to publish</typeparam>
         /// <param name="values">
-        /// The dictionary of values to become hydrated and
-        /// published under the type of the interface.
+        /// The dictionary of values to become hydrated and published under the type of the interface.
         /// </param>
         /// <param name="publishPipe"></param>
         /// <param name="cancellationToken"></param>
@@ -140,8 +126,7 @@ namespace MassTransit
         /// </summary>
         /// <typeparam name="T">The type of the message to publish</typeparam>
         /// <param name="values">
-        /// The dictionary of values to become hydrated and
-        /// published under the type of the interface.
+        /// The dictionary of values to become hydrated and published under the type of the interface.
         /// </param>
         /// <param name="publishPipe"></param>
         /// <param name="cancellationToken"></param>

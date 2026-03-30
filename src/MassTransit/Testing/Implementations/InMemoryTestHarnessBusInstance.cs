@@ -19,7 +19,7 @@ namespace MassTransit.Testing.Implementations
         public InMemoryTestHarness Harness { get; }
 
         public string Name => "masstransit-bus";
-        public Type InstanceType => typeof(InMemoryTestHarness);
+        public Type InstanceType => typeof(IBus);
         public IBus Bus => Harness.Bus;
         public IBusControl BusControl => Harness.BusControl;
         public IHostConfiguration HostConfiguration => Harness.HostConfiguration;
@@ -41,7 +41,8 @@ namespace MassTransit.Testing.Implementations
         {
             return BusControl.ConnectReceiveEndpoint(definition, endpointNameFormatter, configurator =>
             {
-                _busRegistrationContext.GetConfigureReceiveEndpoints().Configure(definition.GetEndpointName(endpointNameFormatter), configurator);
+                _busRegistrationContext.GetConfigureReceiveEndpoints()
+                    .Configure(definition.GetEndpointName(endpointNameFormatter), configurator);
 
                 configure?.Invoke(_busRegistrationContext, configurator);
             });

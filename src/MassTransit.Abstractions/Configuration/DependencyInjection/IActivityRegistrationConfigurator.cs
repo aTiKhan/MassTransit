@@ -1,7 +1,6 @@
 namespace MassTransit
 {
     using System;
-    using Courier;
 
 
     public interface IActivityRegistrationConfigurator<TActivity, TArguments, TLog> :
@@ -34,5 +33,7 @@ namespace MassTransit
         /// </summary>
         /// <param name="configureCompensate"></param>
         IActivityRegistrationConfigurator CompensateEndpoint(Action<IEndpointRegistrationConfigurator> configureCompensate);
+
+        void ExcludeFromConfigureEndpoints();
     }
 }

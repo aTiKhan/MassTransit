@@ -21,19 +21,29 @@ namespace MassTransit.Contracts.JobService
         /// <summary>
         /// The arguments used to start the job
         /// </summary>
-        IDictionary<string, object> Job { get; }
+        Dictionary<string, object> Job { get; }
 
         /// <summary>
-        /// The result of the job
+        /// Properties specified for this job
         /// </summary>
-        IDictionary<string, object> Result { get; }
+        Dictionary<string, object>? JobProperties { get; }
+
+        /// <summary>
+        /// Properties of the instance that completed the job
+        /// </summary>
+        Dictionary<string, object>? InstanceProperties { get; }
+
+        /// <summary>
+        /// Properties related to the job type
+        /// </summary>
+        Dictionary<string, object>? JobTypeProperties { get; }
     }
 
 
     /// <summary>
-    /// Published when a job completes (separately from <see cref="JobCompleted"/>)
+    /// Published when a job completes (separately from <see cref="JobCompleted" />)
     /// </summary>
-    public interface JobCompleted<T>
+    public interface JobCompleted<out T>
         where T : class
     {
         Guid JobId { get; }
@@ -42,14 +52,21 @@ namespace MassTransit.Contracts.JobService
 
         TimeSpan Duration { get; }
 
-        /// <summary>
-        /// The arguments used to start the job
-        /// </summary>
-        IDictionary<string, object> Job { get; }
+        T Job { get; }
 
         /// <summary>
-        /// The result of the job
+        /// Properties specified for this job
         /// </summary>
-        IDictionary<string, object> Result { get; }
+        Dictionary<string, object>? JobProperties { get; }
+
+        /// <summary>
+        /// Properties of the instance that completed the job
+        /// </summary>
+        Dictionary<string, object>? InstanceProperties { get; }
+
+        /// <summary>
+        /// Properties related to the job type
+        /// </summary>
+        Dictionary<string, object>? JobTypeProperties { get; }
     }
 }

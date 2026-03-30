@@ -5,13 +5,20 @@ namespace MassTransit.ActiveMqTransport.Tests
     using System.Threading.Tasks;
     using NUnit.Framework;
     using TestFramework;
+    using Testing;
 
 
     [Category("Flaky")]
-    [TestFixture]
+    [TestFixture(ActiveMqHostAddress.ActiveMqScheme)]
+    [TestFixture(ActiveMqHostAddress.AmqpScheme)]
     public class KillSwitch_Specs :
         ActiveMqTestFixture
     {
+        public KillSwitch_Specs(string protocol)
+            : base(protocol)
+        {
+        }
+
         [Test]
         public async Task Should_be_degraded_after_too_many_exceptions()
         {
@@ -19,11 +26,14 @@ namespace MassTransit.ActiveMqTransport.Tests
 
             await Task.WhenAll(Enumerable.Range(0, 11).Select(x => Bus.Publish(new BadMessage())));
 
-            Assert.That(await BusControl.WaitForHealthStatus(BusHealthStatus.Degraded, TimeSpan.FromSeconds(15)), Is.EqualTo(BusHealthStatus.Degraded));
+            await Assert.MultipleAsync(async () =>
+            {
+                Assert.That(await BusControl.WaitForHealthStatus(BusHealthStatus.Degraded, TimeSpan.FromSeconds(15)), Is.EqualTo(BusHealthStatus.Degraded));
 
-            Assert.That(await BusControl.WaitForHealthStatus(BusHealthStatus.Healthy, TimeSpan.FromSeconds(10)), Is.EqualTo(BusHealthStatus.Healthy));
+                Assert.That(await BusControl.WaitForHealthStatus(BusHealthStatus.Healthy, TimeSpan.FromSeconds(10)), Is.EqualTo(BusHealthStatus.Healthy));
 
-            Assert.That(await ActiveMqTestHarness.Consumed.SelectAsync<BadMessage>().Take(11).Count(), Is.EqualTo(11));
+                Assert.That(await ActiveMqTestHarness.Consumed.SelectAsync<BadMessage>().Take(11).Count(), Is.EqualTo(11));
+            });
 
             await Task.WhenAll(Enumerable.Range(0, 20).Select(x => Bus.Publish(new GoodMessage())));
 

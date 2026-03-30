@@ -4,13 +4,13 @@ namespace MassTransit.HangfireIntegration
     using System.Collections.Generic;
     using System.Net.Mime;
     using System.Threading.Tasks;
+    using Context;
     using Hangfire;
     using Hangfire.Server;
     using Serialization;
-    using Transports;
 
 
-    [Queue(SchedulerBusObserver.DefaultQueueName)]
+    [Queue(HangfireEndpointOptions.DefaultQueueName)]
     class ScheduleJob
     {
         readonly IBus _bus;
@@ -21,6 +21,11 @@ namespace MassTransit.HangfireIntegration
         }
 
         [HashCleanup]
+        public Task SendMessage(HashedHangfireScheduledMessageData messageData, PerformContext performContext)
+        {
+            return SendMessage((HangfireScheduledMessageData)messageData, performContext);
+        }
+
         public async Task SendMessage(HangfireScheduledMessageData messageData, PerformContext performContext)
         {
             try
@@ -33,9 +38,7 @@ namespace MassTransit.HangfireIntegration
 
                 var endpoint = await _bus.GetSendEndpoint(messageData.Destination).ConfigureAwait(false);
 
-                var scheduled = new Scheduled();
-
-                await endpoint.Send(scheduled, pipe, performContext.CancellationToken.ShutdownToken).ConfigureAwait(false);
+                await endpoint.Send(new SerializedMessageBody(), pipe, performContext.CancellationToken.ShutdownToken).ConfigureAwait(false);
 
                 LogContext.Debug?.Log("Schedule Executed: {JobId}, created at: {CreatedAt}", performContext.BackgroundJob.Id,
                     performContext.BackgroundJob.CreatedAt);
@@ -62,9 +65,7 @@ namespace MassTransit.HangfireIntegration
 
                 var endpoint = await _bus.GetSendEndpoint(messageData.Destination).ConfigureAwait(false);
 
-                var scheduled = new Scheduled();
-
-                await endpoint.Send(scheduled, pipe, performContext.CancellationToken.ShutdownToken).ConfigureAwait(false);
+                await endpoint.Send(new SerializedMessageBody(), pipe, performContext.CancellationToken.ShutdownToken).ConfigureAwait(false);
 
                 LogContext.Debug?.Log("Schedule Executed: {JobId}, created at: {CreatedAt}, with range: {StartTime}-{EndTime}", performContext.BackgroundJob.Id,
                     performContext.BackgroundJob.CreatedAt, messageData.StartTime, messageData.EndTime);
@@ -99,11 +100,13 @@ namespace MassTransit.HangfireIntegration
             {
                 var deserializer = context.Serialization.GetMessageDeserializer(_contentType);
 
-                var body = new StringMessageBody(_body);
+                var body = deserializer.GetMessageBody(_body);
 
                 var serializerContext = deserializer.Deserialize(body, _messageContext, _destinationAddress);
 
-                context.MessageId = _messageContext.MessageId;
+                if (_messageContext.MessageId.HasValue)
+                    context.MessageId = _messageContext.MessageId;
+
                 context.RequestId = _messageContext.RequestId;
                 context.ConversationId = _messageContext.ConversationId;
                 context.CorrelationId = _messageContext.CorrelationId;
@@ -111,12 +114,17 @@ namespace MassTransit.HangfireIntegration
                 context.SourceAddress = _messageContext.SourceAddress;
                 context.ResponseAddress = _messageContext.ResponseAddress;
                 context.FaultAddress = _messageContext.FaultAddress;
+                context.SupportedMessageTypes = _messageContext.SupportedMessageTypes;
 
                 if (_messageContext.ExpirationTime.HasValue)
                     context.TimeToLive = _messageContext.ExpirationTime.Value.ToUniversalTime() - DateTime.UtcNow;
 
                 foreach (KeyValuePair<string, object> header in _messageContext.Headers.GetAll())
                     context.Headers.Set(header.Key, header.Value);
+
+                IReadOnlyDictionary<string, object>? transportProperties = _messageContext.TransportProperties;
+                if (transportProperties != null && context is TransportSendContext transportSendContext)
+                    transportSendContext.ReadPropertiesFrom(transportProperties);
 
                 context.Serializer = serializerContext.GetMessageSerializer();
 
@@ -126,11 +134,6 @@ namespace MassTransit.HangfireIntegration
             public void Probe(ProbeContext context)
             {
             }
-        }
-
-
-        class Scheduled
-        {
         }
     }
 }

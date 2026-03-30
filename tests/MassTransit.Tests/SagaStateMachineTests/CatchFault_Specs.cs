@@ -3,7 +3,6 @@
     using System;
     using System.Threading.Tasks;
     using FaultTestContracts;
-    using MassTransit.Saga;
     using MassTransit.Testing;
     using NUnit.Framework;
     using TestFramework;
@@ -11,6 +10,9 @@
 
     namespace FaultTestContracts
     {
+        using System;
+
+
         public class Start :
             CorrelatedBy<Guid>
         {
@@ -93,13 +95,16 @@
 
             Response<StartFaulted> startFaulted = await Bus.Request<Start, StartFaulted>(InputQueueAddress, message, TestCancellationToken, TestTimeout);
 
-            Assert.AreEqual(message.CorrelationId, startFaulted.CorrelationId);
+            Assert.That(startFaulted.CorrelationId, Is.EqualTo(message.CorrelationId));
 
             ConsumeContext<ServiceFaulted> context = await serviceFaulted;
 
-            Assert.AreEqual(message.CorrelationId, context.CorrelationId);
+            await Assert.MultipleAsync(async () =>
+            {
+                Assert.That(context.CorrelationId, Is.EqualTo(message.CorrelationId));
 
-            Assert.That(await _repository.ShouldContainSagaInState(message.CorrelationId, _machine, x => x.FailedToStart, TestTimeout), Is.Not.Null);
+                Assert.That(await _repository.ShouldContainSagaInState(message.CorrelationId, _machine, x => x.FailedToStart, TestTimeout), Is.Not.Null);
+            });
         }
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
@@ -170,13 +175,16 @@
 
             Response<StartFaulted> startFaulted = await Bus.Request<Start, StartFaulted>(InputQueueAddress, message, TestCancellationToken, TestTimeout);
 
-            Assert.AreEqual(message.CorrelationId, startFaulted.CorrelationId);
+            Assert.That(startFaulted.CorrelationId, Is.EqualTo(message.CorrelationId));
 
             ConsumeContext<ServiceFaulted> context = await serviceFaulted;
 
-            Assert.AreEqual(message.CorrelationId, context.CorrelationId);
+            await Assert.MultipleAsync(async () =>
+            {
+                Assert.That(context.CorrelationId, Is.EqualTo(message.CorrelationId));
 
-            Assert.That(await _repository.ShouldNotContainSaga(message.CorrelationId, TestTimeout), Is.Null);
+                Assert.That(await LoadSagaRepository.ShouldNotContainSaga(message.CorrelationId, TestTimeout), Is.Null);
+            });
         }
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
@@ -189,6 +197,7 @@
 
         TestStateMachine _machine;
         InMemorySagaRepository<Instance> _repository;
+        ILoadSagaRepository<Instance> LoadSagaRepository => _repository;
 
 
         class Instance :
@@ -232,6 +241,5 @@
 
             public Event<Start> Started { get; }
         }
-
     }
 }

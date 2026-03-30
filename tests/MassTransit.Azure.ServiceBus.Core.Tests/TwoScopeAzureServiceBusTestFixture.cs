@@ -3,20 +3,19 @@
     using System;
     using System.Threading;
     using System.Threading.Tasks;
-    using Context;
-    using Logging;
     using NUnit.Framework;
 
 
-    public class TwoScopeAzureServiceBusTestFixture :
+    [TestFixture]
+    public abstract class TwoScopeAzureServiceBusTestFixture :
         AzureServiceBusTestFixture
     {
-        public TwoScopeAzureServiceBusTestFixture(string scope)
+        protected TwoScopeAzureServiceBusTestFixture(string scope)
         {
             _secondServiceUri = AzureServiceBusEndpointUriCreator.Create(Configuration.ServiceNamespace, scope);
         }
 
-        public TwoScopeAzureServiceBusTestFixture()
+        protected TwoScopeAzureServiceBusTestFixture()
         {
             _secondServiceUri = AzureServiceBusEndpointUriCreator.Create(Configuration.ServiceNamespace, "MassTransit.Tests.SecondService");
         }
@@ -68,10 +67,8 @@
             {
                 try
                 {
-                    using (var tokenSource = new CancellationTokenSource(TestTimeout))
-                    {
-                        await _secondBusHandle.StopAsync(tokenSource.Token);
-                    }
+                    using var tokenSource = new CancellationTokenSource(TestTimeout);
+                    await _secondBusHandle.StopAsync(tokenSource.Token);
                 }
                 finally
                 {
@@ -88,10 +85,8 @@
         {
             try
             {
-                using (var tokenSource = new CancellationTokenSource(TestTimeout))
-                {
-                    await _secondBusHandle?.StopAsync(tokenSource.Token);
-                }
+                using var tokenSource = new CancellationTokenSource(TestTimeout);
+                await _secondBusHandle?.StopAsync(tokenSource.Token);
             }
             catch (Exception ex)
             {

@@ -3,6 +3,7 @@ namespace MassTransit.InMemoryTransport
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using MassTransit.Configuration;
     using Topology;
     using Transports.Fabric;
@@ -13,10 +14,11 @@ namespace MassTransit.InMemoryTransport
         IInMemoryMessagePublishTopologyConfigurator<TMessage>
         where TMessage : class
     {
-        readonly IList<IInMemoryMessagePublishTopology> _implementedMessageTypes;
+        readonly List<IInMemoryMessagePublishTopology> _implementedMessageTypes;
         readonly IMessageTopology<TMessage> _messageTopology;
 
-        public InMemoryMessagePublishTopology(IMessageTopology<TMessage> messageTopology)
+        public InMemoryMessagePublishTopology(IPublishTopologyConfigurator publishTopology, IMessageTopology<TMessage> messageTopology)
+            : base(publishTopology)
         {
             _messageTopology = messageTopology;
             _implementedMessageTypes = new List<IInMemoryMessagePublishTopology>();
@@ -26,6 +28,9 @@ namespace MassTransit.InMemoryTransport
 
         public void Apply(IMessageFabricPublishTopologyBuilder builder)
         {
+            if (Exclude)
+                return;
+
             var exchangeName = _messageTopology.EntityName;
 
             builder.ExchangeDeclare(exchangeName, ExchangeType);
@@ -42,11 +47,9 @@ namespace MassTransit.InMemoryTransport
                 configurator.Apply(builder);
         }
 
-        public override bool TryGetPublishAddress(Uri baseAddress, out Uri? publishAddress)
+        public override bool TryGetPublishAddress(Uri baseAddress, [NotNullWhen(true)] out Uri? publishAddress)
         {
-            var exchangeName = _messageTopology.EntityName;
-
-            publishAddress = new InMemoryEndpointAddress(new InMemoryHostAddress(baseAddress), exchangeName, exchangeType: ExchangeType);
+            publishAddress = new InMemoryEndpointAddress(new InMemoryHostAddress(baseAddress), _messageTopology.EntityName, exchangeType: ExchangeType);
             return true;
         }
 

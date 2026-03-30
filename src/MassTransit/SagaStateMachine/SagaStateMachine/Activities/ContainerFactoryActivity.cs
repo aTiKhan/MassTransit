@@ -7,7 +7,7 @@
     public class ContainerFactoryActivity<TSaga, TActivity> :
         IStateMachineActivity<TSaga>
         where TActivity : class, IStateMachineActivity<TSaga>
-        where TSaga : class, ISaga
+        where TSaga : class, SagaStateMachineInstance
     {
         public void Accept(StateMachineVisitor visitor)
         {
@@ -16,9 +16,7 @@
 
         public Task Execute(BehaviorContext<TSaga> context, IBehavior<TSaga> next)
         {
-            var factory = context.GetStateMachineActivityFactory();
-
-            var activity = factory.GetService<TActivity>(context);
+            var activity = context.GetServiceOrCreateInstance<TActivity>();
 
             return activity.Execute(context, next);
         }
@@ -26,26 +24,26 @@
         public Task Execute<T>(BehaviorContext<TSaga, T> context, IBehavior<TSaga, T> next)
             where T : class
         {
-            var factory = context.GetStateMachineActivityFactory();
+            var activity = context.GetServiceOrCreateInstance<TActivity>();
 
-            var activity = factory.GetService<TActivity>(context);
-
-            var widenBehavior = new WidenBehavior<TSaga, T>(next, context);
-
-            return activity.Execute(context, widenBehavior);
+            return activity.Execute(context, next);
         }
 
         public Task Faulted<TException>(BehaviorExceptionContext<TSaga, TException> context, IBehavior<TSaga> next)
             where TException : Exception
         {
-            return next.Faulted(context);
+            var activity = context.GetServiceOrCreateInstance<TActivity>();
+
+            return activity.Faulted(context, next);
         }
 
         public Task Faulted<T, TException>(BehaviorExceptionContext<TSaga, T, TException> context, IBehavior<TSaga, T> next)
             where T : class
             where TException : Exception
         {
-            return next.Faulted(context);
+            var activity = context.GetServiceOrCreateInstance<TActivity>();
+
+            return activity.Faulted(context, next);
         }
 
         public void Probe(ProbeContext context)
@@ -58,7 +56,7 @@
     public class ContainerFactoryActivity<TSaga, TMessage, TActivity> :
         IStateMachineActivity<TSaga, TMessage>
         where TActivity : class, IStateMachineActivity<TSaga, TMessage>
-        where TSaga : class, ISaga
+        where TSaga : class, SagaStateMachineInstance
         where TMessage : class
     {
         void IProbeSite.Probe(ProbeContext context)
@@ -68,9 +66,7 @@
 
         public Task Execute(BehaviorContext<TSaga, TMessage> context, IBehavior<TSaga, TMessage> next)
         {
-            var factory = context.GetStateMachineActivityFactory();
-
-            var activity = factory.GetService<TActivity>(context);
+            var activity = context.GetServiceOrCreateInstance<TActivity>();
 
             return activity.Execute(context, next);
         }
@@ -78,7 +74,9 @@
         public Task Faulted<TException>(BehaviorExceptionContext<TSaga, TMessage, TException> context, IBehavior<TSaga, TMessage> next)
             where TException : Exception
         {
-            return next.Faulted(context);
+            var activity = context.GetServiceOrCreateInstance<TActivity>();
+
+            return activity.Faulted(context, next);
         }
 
         public void Accept(StateMachineVisitor visitor)

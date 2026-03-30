@@ -2,6 +2,7 @@ namespace MassTransit.KafkaIntegration.Configuration
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using Confluent.Kafka;
     using Observables;
     using Serializers;
@@ -17,19 +18,26 @@ namespace MassTransit.KafkaIntegration.Configuration
         readonly ReceiveEndpointObservable _endpointObservers;
         readonly IHeadersDeserializer _headersDeserializer;
         readonly IKafkaHostConfiguration _hostConfiguration;
+        readonly IKafkaSerializerFactory _kafkaSerializerFactory;
+        readonly Action<IClient, string> _oAuthBearerTokenRefreshHandler;
         readonly string _topicName;
 
         public KafkaConsumerSpecification(IKafkaHostConfiguration hostConfiguration, ConsumerConfig consumerConfig, string topicName,
-            IHeadersDeserializer headersDeserializer,
-            Action<IKafkaTopicReceiveEndpointConfigurator<TKey, TValue>> configure)
+            IHeadersDeserializer headersDeserializer, IKafkaSerializerFactory kafkaSerializerFactory,
+            Action<IKafkaTopicReceiveEndpointConfigurator<TKey, TValue>> configure,
+            Action<IClient, string> oAuthBearerTokenRefreshHandler)
         {
             _hostConfiguration = hostConfiguration;
             _consumerConfig = consumerConfig;
             _topicName = topicName;
             _endpointObservers = new ReceiveEndpointObservable();
             _headersDeserializer = headersDeserializer;
+            _kafkaSerializerFactory = kafkaSerializerFactory;
             _configure = configure;
+            _oAuthBearerTokenRefreshHandler = oAuthBearerTokenRefreshHandler;
             EndpointName = $"{KafkaTopicAddress.PathPrefix}/{_topicName}";
+            if (!string.IsNullOrWhiteSpace(_consumerConfig.GroupId))
+                EndpointName = $"{EndpointName}/{_consumerConfig.GroupId}";
         }
 
         public string EndpointName { get; }
@@ -37,14 +45,17 @@ namespace MassTransit.KafkaIntegration.Configuration
         public ReceiveEndpoint CreateReceiveEndpoint(IBusInstance busInstance)
         {
             var endpointConfiguration = busInstance.HostConfiguration.CreateReceiveEndpointConfiguration(EndpointName);
-            endpointConfiguration.ConnectReceiveEndpointObserver(_endpointObservers);
 
             var configurator = new KafkaTopicReceiveEndpointConfiguration<TKey, TValue>(_hostConfiguration, _consumerConfig, _topicName, busInstance,
-                endpointConfiguration, _headersDeserializer);
-
+                endpointConfiguration, _oAuthBearerTokenRefreshHandler);
+            configurator.ConnectReceiveEndpointObserver(_endpointObservers);
+            configurator.SetHeadersDeserializer(_headersDeserializer);
+            configurator.SetKeyDeserializer(_kafkaSerializerFactory.GetDeserializer<TKey>());
+            configurator.SetValueDeserializer(_kafkaSerializerFactory.GetDeserializer<TValue>());
             _configure?.Invoke(configurator);
 
-            IReadOnlyList<ValidationResult> result = Validate().ThrowIfContainsFailure($"{TypeCache.GetShortName(GetType())} configuration is invalid:");
+            IReadOnlyList<ValidationResult> result = Validate().Concat(configurator.Validate())
+                .ThrowIfContainsFailure($"{TypeCache.GetShortName(GetType())} configuration is invalid:");
 
             try
             {
@@ -52,7 +63,7 @@ namespace MassTransit.KafkaIntegration.Configuration
             }
             catch (Exception ex)
             {
-                throw new ConfigurationException(result, "An exception occurred creating the Kafka receive endpoint", ex);
+                throw new ConfigurationException(result, "An exception occurred creating Kafka receive endpoint", ex);
             }
         }
 

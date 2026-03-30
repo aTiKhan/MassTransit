@@ -1,8 +1,8 @@
 namespace MassTransit.Middleware
 {
     using System.Threading.Tasks;
-    using Courier;
     using DependencyInjection;
+    using Metadata;
 
 
     public class ScopedCompensateFilter<TActivity, TArguments, TFilter> :
@@ -30,6 +30,7 @@ namespace MassTransit.Middleware
         public void Probe(ProbeContext context)
         {
             var scope = context.CreateFilterScope("scopedFilter");
+            scope.Add("filter", TypeMetadataCache<TFilter>.ShortName);
 
             _scopeProvider.Probe(scope);
         }

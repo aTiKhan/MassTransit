@@ -1,15 +1,17 @@
 namespace MassTransit.KafkaIntegration
 {
     using System;
+    using System.Threading;
     using System.Threading.Tasks;
     using Confluent.Kafka;
 
 
-    public interface IConsumerLockContext<TKey, TValue>
-        where TValue : class
+    public interface IConsumerLockContext :
+        IAsyncDisposable
     {
-        Task Pending(ConsumeResult<TKey, TValue> result);
-        Task Complete(ConsumeResult<TKey, TValue> result);
-        Task Faulted(ConsumeResult<TKey, TValue> result, Exception exception);
+        Task Pending(ConsumeResult<byte[], byte[]> result);
+        Task Complete(ConsumeResult<byte[], byte[]> result);
+        Task Faulted(ConsumeResult<byte[], byte[]> result, Exception exception);
+        void Canceled(ConsumeResult<byte[], byte[]> result, CancellationToken cancellationToken);
     }
 }

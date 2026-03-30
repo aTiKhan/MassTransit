@@ -49,7 +49,7 @@
             await Bus.Publish<ThirdInterface>(new { });
             await Bus.Publish<AnotherThirdInterface>(new { });
 
-            ConsumeContext<FirstInterface> received = await _receivedA;
+            await _receivedA;
         }
 
         Task<ConsumeContext<FirstInterface>> _receivedA;
@@ -109,15 +109,23 @@
 
             var topology = _builder.BuildBrokerTopology();
 
-            var interfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface)).ToString();
+            var interfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.True);
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == _inputQueueName), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.True);
+                Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == _inputQueueName),
+                    Is.True);
+            });
 
-            interfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface)).ToString();
+            interfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.False);
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == _inputQueueName), Is.False);
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.False);
+                Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == _inputQueueName),
+                    Is.False);
+            });
         }
 
         [Test]
@@ -130,19 +138,21 @@
 
             var topology = _builder.BuildBrokerTopology();
 
-            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(SingleInterface)).ToString();
+            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(SingleInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == singleInterfaceName && x.Destination.ExchangeName == _inputQueueName),
-                Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+                Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == singleInterfaceName && x.Destination.ExchangeName == _inputQueueName),
+                    Is.True);
+            });
         }
 
         [SetUp]
         public void Setup()
         {
             _nameFormatter = new RabbitMqMessageNameFormatter();
-            _entityNameFormatter = new MessageNameFormatterEntityNameFormatter(_nameFormatter);
-            _consumeTopology = new RabbitMqConsumeTopology(RabbitMqBusFactory.MessageTopology, new RabbitMqPublishTopology(RabbitMqBusFactory.MessageTopology));
+            _consumeTopology = new RabbitMqConsumeTopology(RabbitMqBusFactory.CreateMessageTopology(), new RabbitMqPublishTopology(RabbitMqBusFactory.CreateMessageTopology()));
 
             _builder = new ReceiveEndpointBrokerTopologyBuilder();
 
@@ -155,7 +165,6 @@
         }
 
         RabbitMqMessageNameFormatter _nameFormatter;
-        MessageNameFormatterEntityNameFormatter _entityNameFormatter;
         IRabbitMqConsumeTopologyConfigurator _consumeTopology;
         ReceiveEndpointBrokerTopologyBuilder _builder;
         string _inputQueueName;
@@ -173,16 +182,22 @@
 
             var topology = _builder.BuildBrokerTopology();
 
-            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface)).ToString();
-            var interfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface)).ToString();
+            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface));
+            var interfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.True);
-            Assert.That(topology.Exchanges.Length, Is.EqualTo(2));
-            Assert.That(topology.ExchangeBindings.Length, Is.EqualTo(1));
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == singleInterfaceName),
-                Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.True);
+                Assert.That(topology.Exchanges, Has.Length.EqualTo(2));
+                Assert.That(topology.ExchangeBindings, Has.Length.EqualTo(1));
+            });
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == singleInterfaceName),
+                    Is.True);
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+            });
         }
 
         [Test]
@@ -193,25 +208,26 @@
 
             var topology = _builder.BuildBrokerTopology();
 
-            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(SingleInterface)).ToString();
+            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(SingleInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
-            Assert.That(topology.Exchanges.Length, Is.EqualTo(1));
-            Assert.That(topology.ExchangeBindings.Length, Is.EqualTo(0));
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+                Assert.That(topology.Exchanges, Has.Length.EqualTo(1));
+                Assert.That(topology.ExchangeBindings, Is.Empty);
+            });
         }
 
         [SetUp]
         public void Setup()
         {
             _nameFormatter = new RabbitMqMessageNameFormatter();
-            _entityNameFormatter = new MessageNameFormatterEntityNameFormatter(_nameFormatter);
-            _publishTopology = new RabbitMqPublishTopology(RabbitMqBusFactory.MessageTopology);
+            _publishTopology = new RabbitMqPublishTopology(RabbitMqBusFactory.CreateMessageTopology());
 
             _builder = new PublishEndpointBrokerTopologyBuilder();
         }
 
         RabbitMqMessageNameFormatter _nameFormatter;
-        MessageNameFormatterEntityNameFormatter _entityNameFormatter;
         IRabbitMqPublishTopologyConfigurator _publishTopology;
         PublishEndpointBrokerTopologyBuilder _builder;
     }
@@ -229,16 +245,22 @@
             var topology = _builder.BuildBrokerTopology();
             topology.LogResult();
 
-            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface)).ToString();
-            var interfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface)).ToString();
+            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface));
+            var interfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.True);
-            Assert.That(topology.Exchanges.Length, Is.EqualTo(2));
-            Assert.That(topology.ExchangeBindings.Length, Is.EqualTo(1));
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == singleInterfaceName),
-                Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == interfaceName), Is.True);
+                Assert.That(topology.Exchanges, Has.Length.EqualTo(2));
+                Assert.That(topology.ExchangeBindings, Has.Length.EqualTo(1));
+            });
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == interfaceName && x.Destination.ExchangeName == singleInterfaceName),
+                    Is.True);
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+            });
         }
 
         [Test]
@@ -250,11 +272,14 @@
             var topology = _builder.BuildBrokerTopology();
             topology.LogResult();
 
-            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(SingleInterface)).ToString();
+            var singleInterfaceName = _nameFormatter.GetMessageName(typeof(SingleInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
-            Assert.That(topology.Exchanges.Length, Is.EqualTo(1));
-            Assert.That(topology.ExchangeBindings.Length, Is.EqualTo(0));
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == singleInterfaceName), Is.True);
+                Assert.That(topology.Exchanges, Has.Length.EqualTo(1));
+                Assert.That(topology.ExchangeBindings, Is.Empty);
+            });
         }
 
         [Test]
@@ -266,34 +291,40 @@
             var topology = _builder.BuildBrokerTopology();
             topology.LogResult();
 
-            var firstInterfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface)).ToString();
-            var secondInterfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface)).ToString();
-            var thirdInterfaceName = _nameFormatter.GetMessageName(typeof(ThirdInterface)).ToString();
+            var firstInterfaceName = _nameFormatter.GetMessageName(typeof(FirstInterface));
+            var secondInterfaceName = _nameFormatter.GetMessageName(typeof(SecondInterface));
+            var thirdInterfaceName = _nameFormatter.GetMessageName(typeof(ThirdInterface));
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == secondInterfaceName), Is.True);
-            Assert.That(topology.Exchanges.Length, Is.EqualTo(3));
-            Assert.That(topology.ExchangeBindings.Length, Is.EqualTo(2));
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == secondInterfaceName && x.Destination.ExchangeName == firstInterfaceName),
-                Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == secondInterfaceName), Is.True);
+                Assert.That(topology.Exchanges, Has.Length.EqualTo(3));
+                Assert.That(topology.ExchangeBindings, Has.Length.EqualTo(2));
+            });
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    topology.ExchangeBindings.Any(x => x.Source.ExchangeName == secondInterfaceName && x.Destination.ExchangeName == firstInterfaceName),
+                    Is.True);
 
-            Assert.That(topology.ExchangeBindings.Any(x => x.Source.ExchangeName == thirdInterfaceName && x.Destination.ExchangeName == secondInterfaceName),
-                Is.True);
+                Assert.That(
+                    topology.ExchangeBindings.Any(x => x.Source.ExchangeName == thirdInterfaceName && x.Destination.ExchangeName == secondInterfaceName),
+                    Is.True);
 
-            Assert.That(topology.Exchanges.Any(x => x.ExchangeName == firstInterfaceName), Is.True);
+                Assert.That(topology.Exchanges.Any(x => x.ExchangeName == firstInterfaceName), Is.True);
+            });
         }
 
         [SetUp]
         public void Setup()
         {
             _nameFormatter = new RabbitMqMessageNameFormatter();
-            _entityNameFormatter = new MessageNameFormatterEntityNameFormatter(_nameFormatter);
-            _publishTopology = new RabbitMqPublishTopology(RabbitMqBusFactory.MessageTopology);
+            _publishTopology = new RabbitMqPublishTopology(RabbitMqBusFactory.CreateMessageTopology());
 
             _builder = new PublishEndpointBrokerTopologyBuilder(PublishBrokerTopologyOptions.MaintainHierarchy);
         }
 
         RabbitMqMessageNameFormatter _nameFormatter;
-        MessageNameFormatterEntityNameFormatter _entityNameFormatter;
         IRabbitMqPublishTopologyConfigurator _publishTopology;
         PublishEndpointBrokerTopologyBuilder _builder;
     }

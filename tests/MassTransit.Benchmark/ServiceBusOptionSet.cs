@@ -8,11 +8,10 @@ namespace MassTransitBenchmark
     using Azure.Messaging.ServiceBus.Administration;
     using MassTransit;
     using MassTransit.AzureServiceBusTransport.Configuration;
-    using MassTransit.Configuration;
     using NDesk.Options;
 
 
-    class ServiceBusOptionSet :
+    public class ServiceBusOptionSet :
         OptionSet,
         ServiceBusHostSettings
     {
@@ -24,7 +23,6 @@ namespace MassTransitBenchmark
         public ServiceBusOptionSet()
         {
             _hostSettings = new HostSettings();
-            DefaultConnections = ServicePointManager.DefaultConnectionLimit;
 
             Add<string>("ns=", "The service bus namespace",
                 x => ServiceUri = new UriBuilder
@@ -36,18 +34,18 @@ namespace MassTransitBenchmark
             Add<string>("keyname=", "The access key name", x =>
             {
                 _keyName = x;
-                _hostSettings.NamedKeyCredential = new AzureNamedKeyCredential(_keyName, _accessKey);
+                if (!string.IsNullOrWhiteSpace(_keyName) && !string.IsNullOrWhiteSpace(_accessKey))
+                    _hostSettings.NamedKeyCredential = new AzureNamedKeyCredential(_keyName, _accessKey);
             });
             Add<string>("key=", "The access key", x =>
             {
                 _accessKey = x;
-                _hostSettings.NamedKeyCredential = new AzureNamedKeyCredential(_keyName, _accessKey);
+                if (!string.IsNullOrWhiteSpace(_keyName) && !string.IsNullOrWhiteSpace(_accessKey))
+                    _hostSettings.NamedKeyCredential = new AzureNamedKeyCredential(_keyName, _accessKey);
             });
-            Add<int>("connections=", "The number of connections to configure for the service point manager", x => DefaultConnections = x);
             Add<bool>("split:", "Split into two bus instances to leverage separate connections", x => Split = x);
         }
 
-        public int DefaultConnections { get; set; }
         public bool Split { get; private set; }
 
         public Uri ServiceUri { get; private set; }
@@ -76,7 +74,6 @@ namespace MassTransitBenchmark
             Console.WriteLine("Key Name: {0}", _keyName);
             Console.WriteLine("Access Key: {0}", new string('*', (_accessKey ?? "default").Length));
             Console.WriteLine("Split: {0}", Split);
-            Console.WriteLine("Service Point Manager.Default Connections: {0}", DefaultConnections);
         }
     }
 }

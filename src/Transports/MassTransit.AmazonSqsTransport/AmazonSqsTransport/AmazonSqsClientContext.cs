@@ -1,245 +1,262 @@
-namespace MassTransit.AmazonSqsTransport
+namespace MassTransit.AmazonSqsTransport;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
+using Amazon.SimpleNotificationService;
+using Amazon.SimpleNotificationService.Model;
+using Amazon.SQS;
+using Amazon.SQS.Model;
+using Internals;
+using MassTransit.Middleware;
+using Topology;
+using Transports;
+
+
+public class AmazonSqsClientContext :
+    ScopePipeContext,
+    ClientContext
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using Amazon.Auth.AccessControlPolicy;
-    using Amazon.Auth.AccessControlPolicy.ActionIdentifiers;
-    using Amazon.SimpleNotificationService;
-    using Amazon.SimpleNotificationService.Model;
-    using Amazon.SQS;
-    using Amazon.SQS.Model;
-    using MassTransit.Middleware;
-    using Topology;
-    using Transports;
+    readonly IAmazonSimpleNotificationService _snsClient;
+    readonly IAmazonSQS _sqsClient;
 
-
-    public class AmazonSqsClientContext :
-        ScopePipeContext,
-        ClientContext,
-        IAsyncDisposable
+    public AmazonSqsClientContext(ConnectionContext connectionContext,
+        IAmazonSQS sqsClient,
+        IAmazonSimpleNotificationService snsClient,
+        CancellationToken cancellationToken)
+        : base(connectionContext)
     {
-        readonly CancellationToken _cancellationToken;
-        readonly ConnectionContext _connectionContext;
-        readonly QueueCache _queueCache;
-        readonly IAmazonSimpleNotificationService _snsClient;
-        readonly IAmazonSQS _sqsClient;
-        readonly TopicCache _topicCache;
+        ConnectionContext = connectionContext;
 
-        public AmazonSqsClientContext(ConnectionContext connectionContext, IAmazonSQS sqsClient, IAmazonSimpleNotificationService snsClient,
-            CancellationToken cancellationToken)
-            : base(connectionContext)
+        _sqsClient = sqsClient;
+        _snsClient = snsClient;
+        CancellationToken = cancellationToken;
+    }
+
+    public override CancellationToken CancellationToken { get; }
+
+    public ConnectionContext ConnectionContext { get; }
+
+    public Task<TopicInfo> CreateTopic(Topology.Topic topic, CancellationToken cancellationToken)
+    {
+        return ConnectionContext.GetTopic(topic, cancellationToken);
+    }
+
+    public Task<QueueInfo> CreateQueue(Queue queue, CancellationToken cancellationToken)
+    {
+        return ConnectionContext.GetQueue(queue, cancellationToken);
+    }
+
+    public async Task<bool> CreateQueueSubscription(Topology.Topic topic, Queue queue, CancellationToken cancellationToken)
+    {
+        var topicInfo = await ConnectionContext.GetTopic(topic, cancellationToken).ConfigureAwait(false);
+        var queueInfo = await ConnectionContext.GetQueue(queue, cancellationToken).ConfigureAwait(false);
+
+        Dictionary<string, string> subscriptionAttributes = topic.TopicSubscriptionAttributes.MergeLeft(queue.QueueSubscriptionAttributes)
+            .ToDictionary(x => x.Key, x => x.Value.ToString()!);
+
+        var subscribeRequest = new SubscribeRequest
         {
-            _connectionContext = connectionContext;
-            _sqsClient = sqsClient;
-            _snsClient = snsClient;
-            _cancellationToken = cancellationToken;
+            TopicArn = topicInfo.Arn,
+            Endpoint = queueInfo.Arn,
+            Protocol = "sqs",
+            Attributes = subscriptionAttributes
+        };
 
-            _queueCache = new QueueCache(sqsClient, cancellationToken);
-            _topicCache = new TopicCache(snsClient, cancellationToken);
-        }
-
-        CancellationToken PipeContext.CancellationToken => _cancellationToken;
-
-        ConnectionContext ClientContext.ConnectionContext => _connectionContext;
-
-        public Task<TopicInfo> CreateTopic(Topology.Topic topic)
+        string? subscriptionArn = null;
+        try
         {
-            return _topicCache.Get(topic);
-        }
-
-        public Task<QueueInfo> CreateQueue(Queue queue)
-        {
-            return _queueCache.Get(queue);
-        }
-
-        async Task ClientContext.CreateQueueSubscription(Topology.Topic topic, Queue queue)
-        {
-            var topicInfo = await _topicCache.Get(topic).ConfigureAwait(false);
-            var queueInfo = await _queueCache.Get(queue).ConfigureAwait(false);
-
-            Dictionary<string, string> subscriptionAttributes = topic.TopicSubscriptionAttributes.Select(x => (x.Key, x.Value.ToString()))
-                .Concat(queue.QueueSubscriptionAttributes.Select(x => (x.Key, x.Value.ToString())))
-                .ToDictionary(x => x.Item1, x => x.Item2);
-
-            var subscribeRequest = new SubscribeRequest
-            {
-                TopicArn = topicInfo.Arn,
-                Endpoint = queueInfo.Arn,
-                Protocol = "sqs",
-                Attributes = subscriptionAttributes
-            };
-
-            var response = await _snsClient.SubscribeAsync(subscribeRequest, _cancellationToken).ConfigureAwait(false);
+            var response = await _snsClient.SubscribeAsync(subscribeRequest, cancellationToken).ConfigureAwait(false);
 
             response.EnsureSuccessfulResponse();
 
-            queueInfo.SubscriptionArns.Add(response.SubscriptionArn);
-
-            var sqsQueueArn = queueInfo.Arn;
-            var topicArnPattern = topicInfo.Arn.Substring(0, topicInfo.Arn.LastIndexOf(':') + 1) + "*";
-
-            queueInfo.Attributes.TryGetValue(QueueAttributeName.Policy, out var policyValue);
-            var policy = string.IsNullOrEmpty(policyValue)
-                ? new Policy()
-                : Policy.FromJson(policyValue);
-
-            if (!QueueHasTopicPermission(policy, topicArnPattern, sqsQueueArn))
+            subscriptionArn = response.SubscriptionArn;
+        }
+        catch (InvalidParameterException exception) when (exception.Message.Contains("exists"))
+        {
+            try
             {
-                var statement = new Statement(Statement.StatementEffect.Allow);
-            #pragma warning disable 618
-                statement.Actions.Add(SQSActionIdentifiers.SendMessage);
-            #pragma warning restore 618
-                statement.Resources.Add(new Resource(sqsQueueArn));
-                statement.Conditions.Add(ConditionFactory.NewSourceArnCondition(topicArnPattern));
-                statement.Principals.Add(new Principal("*"));
-                policy.Statements.Add(statement);
+                var existingSubscriptions = await _snsClient.ListSubscriptionsByTopicAsync(topicInfo.Arn, cancellationToken).ConfigureAwait(false);
+                existingSubscriptions.EnsureSuccessfulResponse();
 
-                var jsonPolicy = policy.ToJson();
+                var existingSubscription = existingSubscriptions.Subscriptions.SingleOrDefault(x =>
+                    x.TopicArn == topicInfo.Arn && x.Endpoint == queueInfo.Arn && x.Protocol == "sqs");
 
-                var setAttributes = new Dictionary<string, string> { { QueueAttributeName.Policy, jsonPolicy } };
-                var setAttributesResponse = await _sqsClient.SetQueueAttributesAsync(queueInfo.Url, setAttributes, _cancellationToken).ConfigureAwait(false);
+                if (existingSubscription != null)
+                {
+                    subscriptionArn = existingSubscription.SubscriptionArn;
+                    var attributes = await _snsClient.GetSubscriptionAttributesAsync(subscriptionArn, cancellationToken)
+                        .ConfigureAwait(false);
 
-                setAttributesResponse.EnsureSuccessfulResponse();
+                    if (attributes.HttpStatusCode is >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices)
+                    {
+                        foreach (var (name, value) in SubscriptionAttributesEqual(attributes.Attributes, subscriptionAttributes))
+                        {
+                            var request = new SetSubscriptionAttributesRequest
+                            {
+                                AttributeName = name,
+                                AttributeValue = value,
+                                SubscriptionArn = subscriptionArn
+                            };
 
-                queueInfo.Attributes[QueueAttributeName.Policy] = jsonPolicy;
+                            var updated = await _snsClient.SetSubscriptionAttributesAsync(request, cancellationToken).ConfigureAwait(false);
+                            updated.EnsureSuccessfulResponse();
+
+                            LogContext.Debug?.Log("Updated subscription attribute: {SubscriptionArn} {Name}={Value}", subscriptionArn, name,
+                                value);
+                        }
+                    }
+                }
             }
-        }
-
-        async Task ClientContext.DeleteTopic(Topology.Topic topic)
-        {
-            var topicInfo = await _topicCache.Get(topic).ConfigureAwait(false);
-
-            TransportLogMessages.DeleteTopic(topicInfo.Arn);
-
-            var response = await _snsClient.DeleteTopicAsync(topicInfo.Arn, CancellationToken.None).ConfigureAwait(false);
-
-            response.EnsureSuccessfulResponse();
-
-            _topicCache.RemoveByName(topic.EntityName);
-        }
-
-        async Task ClientContext.DeleteQueue(Queue queue)
-        {
-            var queueInfo = await _queueCache.Get(queue).ConfigureAwait(false);
-
-            TransportLogMessages.DeleteQueue(queueInfo.Url);
-
-            foreach (var subscriptionArn in queueInfo.SubscriptionArns)
+            catch (Exception updateException)
             {
-                TransportLogMessages.DeleteSubscription(queueInfo.Url, subscriptionArn);
-
-                await DeleteQueueSubscription(subscriptionArn).ConfigureAwait(false);
+                LogContext.Warning?.Log(updateException, "Failed to update subscription attributes: {SubscriptionArg}", subscriptionArn);
             }
 
-            var response = await _sqsClient.DeleteQueueAsync(queueInfo.Url, CancellationToken.None).ConfigureAwait(false);
-
-            response.EnsureSuccessfulResponse();
-
-            _queueCache.RemoveByName(queue.EntityName);
+            if (subscriptionArn == null)
+                return false;
         }
 
-        async Task<PublishRequest> ClientContext.CreatePublishRequest(string topicName, string body)
-        {
-            var topicInfo = await _topicCache.GetByName(topicName).ConfigureAwait(false);
+        queueInfo.SubscriptionArns.Add(subscriptionArn);
 
-            return new PublishRequest(topicInfo.Arn, body);
+        var sqsQueueArn = queueInfo.Arn;
+
+        return await queueInfo.UpdatePolicy(sqsQueueArn, topicInfo.Arn, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteTopic(Topology.Topic topic, CancellationToken cancellationToken)
+    {
+        var topicInfo = await ConnectionContext.GetTopic(topic, cancellationToken).ConfigureAwait(false);
+
+        TransportLogMessages.DeleteTopic(topicInfo.Arn);
+
+        var response = await _snsClient.DeleteTopicAsync(topicInfo.Arn, cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessfulResponse();
+
+        await ConnectionContext.RemoveTopicByName(topic.EntityName).ConfigureAwait(false);
+    }
+
+    public async Task DeleteQueue(Queue queue, CancellationToken cancellationToken)
+    {
+        var queueInfo = await ConnectionContext.GetQueue(queue, cancellationToken).ConfigureAwait(false);
+
+        TransportLogMessages.DeleteQueue(queueInfo.Url);
+
+        foreach (var subscriptionArn in queueInfo.SubscriptionArns)
+        {
+            TransportLogMessages.DeleteSubscription(queueInfo.Url, subscriptionArn);
+
+            await DeleteQueueSubscription(subscriptionArn, cancellationToken).ConfigureAwait(false);
         }
 
-        async Task ClientContext.Publish(PublishRequest request, CancellationToken cancellationToken)
-        {
-            var response = await _snsClient.PublishAsync(request, cancellationToken).ConfigureAwait(false);
+        var response = await _sqsClient.DeleteQueueAsync(queueInfo.Url, cancellationToken).ConfigureAwait(false);
 
-            response.EnsureSuccessfulResponse();
+        response.EnsureSuccessfulResponse();
+
+        await ConnectionContext.RemoveQueueByName(queue.EntityName).ConfigureAwait(false);
+    }
+
+    public async Task Publish(string topicName, PublishBatchRequestEntry request, CancellationToken cancellationToken)
+    {
+        var topicInfo = await ConnectionContext.GetTopicByName(topicName, cancellationToken).ConfigureAwait(false);
+
+        await topicInfo.Publish(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SendMessage(string queueName, SendMessageBatchRequestEntry request, CancellationToken cancellationToken)
+    {
+        var queueInfo = await ConnectionContext.GetQueueByName(queueName, cancellationToken).ConfigureAwait(false);
+
+        await queueInfo.Send(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteMessage(string queueName, string receiptHandle, CancellationToken cancellationToken)
+    {
+        var queueInfo = await ConnectionContext.GetQueueByName(queueName, cancellationToken).ConfigureAwait(false);
+
+        await queueInfo.Delete(receiptHandle, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task PurgeQueue(string queueName, CancellationToken cancellationToken)
+    {
+        var queueInfo = await ConnectionContext.GetQueueByName(queueName, cancellationToken).ConfigureAwait(false);
+
+        var response = await _sqsClient.PurgeQueueAsync(queueInfo.Url, cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessfulResponse();
+    }
+
+    public async Task<IList<Message>> ReceiveMessages(string queueName, int messageLimit, int waitTime, CancellationToken cancellationToken)
+    {
+        var queueInfo = await ConnectionContext.GetQueueByName(queueName, cancellationToken).ConfigureAwait(false);
+
+        var request = new ReceiveMessageRequest(queueInfo.Url)
+        {
+            MaxNumberOfMessages = messageLimit,
+            WaitTimeSeconds = waitTime,
+            #pragma warning disable CS0618 // Type or member is obsolete
+            AttributeNames = ["All"],
+            #pragma warning restore CS0618 // Type or member is obsolete
+            MessageAttributeNames = ["All"]
+        };
+
+        var response = await _sqsClient.ReceiveMessageAsync(request, cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessfulResponse();
+
+        return response.Messages ?? new List<Message>();
+    }
+
+    public Task<QueueInfo> GetQueueInfo(string queueName, CancellationToken cancellationToken)
+    {
+        return ConnectionContext.GetQueueByName(queueName, cancellationToken);
+    }
+
+    public async Task ChangeMessageVisibility(string queueUrl, string receiptHandle, int seconds, CancellationToken cancellationToken)
+    {
+        var response = await _sqsClient.ChangeMessageVisibilityAsync(new ChangeMessageVisibilityRequest
+        {
+            QueueUrl = queueUrl,
+            ReceiptHandle = receiptHandle,
+            VisibilityTimeout = seconds
+        }, cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessfulResponse();
+    }
+
+    async Task DeleteQueueSubscription(string subscriptionArn, CancellationToken cancellationToken)
+    {
+        var unsubscribeRequest = new UnsubscribeRequest { SubscriptionArn = subscriptionArn };
+
+        var response = await _snsClient.UnsubscribeAsync(unsubscribeRequest, cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessfulResponse();
+    }
+
+    static IEnumerable<(string, string)> SubscriptionAttributesEqual(Dictionary<string, string> existingAttributes,
+        Dictionary<string, string> updatedAttributes)
+    {
+        if (updatedAttributes.TryGetValue("FilterPolicy", out var filterPolicy))
+        {
+            if (!existingAttributes.TryGetValue("FilterPolicy", out var existingFilterPolicy) || existingFilterPolicy != filterPolicy)
+                yield return ("FilterPolicy", filterPolicy);
         }
 
-        async Task ClientContext.SendMessage(string queueName, SendMessageBatchRequestEntry request, CancellationToken cancellationToken)
+        if (updatedAttributes.TryGetValue("FilterPolicyScope", out var filterPolicyScope))
         {
-            var queueInfo = await _queueCache.GetByName(queueName).ConfigureAwait(false);
-
-            await queueInfo.Send(request, cancellationToken).ConfigureAwait(false);
+            if (!existingAttributes.TryGetValue("FilterPolicyScope", out var existingFilterPolicyScope) || existingFilterPolicyScope != filterPolicyScope)
+                yield return ("FilterPolicyScope", filterPolicyScope);
         }
 
-        async Task ClientContext.DeleteMessage(string queueName, string receiptHandle, CancellationToken cancellationToken)
+        if (updatedAttributes.TryGetValue("RawMessageDelivery", out var rawMessageDelivery))
         {
-            var queueInfo = await _queueCache.GetByName(queueName).ConfigureAwait(false);
-
-            await queueInfo.Delete(receiptHandle, cancellationToken).ConfigureAwait(false);
-        }
-
-        async Task ClientContext.PurgeQueue(string queueName, CancellationToken cancellationToken)
-        {
-            var queueInfo = await _queueCache.GetByName(queueName).ConfigureAwait(false);
-
-            var response = await _sqsClient.PurgeQueueAsync(queueInfo.Url, cancellationToken).ConfigureAwait(false);
-
-            response.EnsureSuccessfulResponse();
-        }
-
-        public async Task<IList<Message>> ReceiveMessages(string queueName, int messageLimit, int waitTime, CancellationToken cancellationToken)
-        {
-            var queueInfo = await _queueCache.GetByName(queueName).ConfigureAwait(false);
-
-            var request = new ReceiveMessageRequest(queueInfo.Url)
-            {
-                MaxNumberOfMessages = messageLimit,
-                WaitTimeSeconds = waitTime,
-                AttributeNames = new List<string> { "All" },
-                MessageAttributeNames = new List<string> { "All" }
-            };
-
-            var response = await _sqsClient.ReceiveMessageAsync(request, cancellationToken).ConfigureAwait(false);
-
-            response.EnsureSuccessfulResponse();
-
-            return response.Messages;
-        }
-
-        public Task<QueueInfo> GetQueueInfo(string queueName)
-        {
-            return _queueCache.GetByName(queueName);
-        }
-
-        public async Task ChangeMessageVisibility(string queueUrl, string receiptHandle, int seconds)
-        {
-            var response = await _sqsClient.ChangeMessageVisibilityAsync(new ChangeMessageVisibilityRequest
-            {
-                QueueUrl = queueUrl,
-                ReceiptHandle = receiptHandle,
-                VisibilityTimeout = seconds
-            }, _cancellationToken).ConfigureAwait(false);
-
-            response.EnsureSuccessfulResponse();
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await _queueCache.DisposeAsync().ConfigureAwait(false);
-
-            _topicCache.Clear();
-        }
-
-        async Task DeleteQueueSubscription(string subscriptionArn)
-        {
-            var unsubscribeRequest = new UnsubscribeRequest { SubscriptionArn = subscriptionArn };
-
-            var response = await _snsClient.UnsubscribeAsync(unsubscribeRequest, _cancellationToken).ConfigureAwait(false);
-
-            response.EnsureSuccessfulResponse();
-        }
-
-        static bool QueueHasTopicPermission(Policy policy, string topicArnPattern, string sqsQueueArn)
-        {
-            IEnumerable<Condition> conditions = policy.Statements
-                .Where(s => s.Resources.Any(r => r.Id.Equals(sqsQueueArn)))
-                .SelectMany(s => s.Conditions);
-
-            return conditions.Any(c =>
-                string.Equals(c.Type, ConditionFactory.ArnComparisonType.ArnLike.ToString(), StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(c.ConditionKey, ConditionFactory.SOURCE_ARN_CONDITION_KEY, StringComparison.OrdinalIgnoreCase) &&
-                c.Values.Contains(topicArnPattern));
+            if (!existingAttributes.TryGetValue("RawMessageDelivery", out var existingRawMessageDelivery)
+                || existingRawMessageDelivery != rawMessageDelivery)
+                yield return ("RawMessageDelivery", rawMessageDelivery);
         }
     }
 }

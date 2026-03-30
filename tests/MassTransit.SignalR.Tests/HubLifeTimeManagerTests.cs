@@ -1,22 +1,33 @@
 ﻿namespace MassTransit.SignalR.Tests
 {
+    using System;
     using System.Linq;
     using System.Threading.Tasks;
     using Contracts;
     using Microsoft.AspNetCore.SignalR.Protocol;
     using NUnit.Framework;
     using OfficialFramework;
+    using Utils;
 
 
-    public class HubLifeTimeManagerTests : SingleScaleoutBackplaneTestFixture<MyHub>
+    public class HubLifeTimeManagerTests :
+        SingleScaleoutBackplaneTestFixture<MyHub>
     {
         async Task AssertMessageAsync(TestClient client)
         {
             var message = await client.ReadAsync().OrTimeout() as InvocationMessage;
-            Assert.NotNull(message);
-            Assert.AreEqual("Hello", message.Target);
-            Assert.AreEqual(1, message.Arguments.Length);
-            Assert.AreEqual("World", (string)message.Arguments[0]);
+            Assert.That(message, Is.Not.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(message.Target, Is.EqualTo("Hello"));
+                Assert.That(message.Arguments, Has.Length.EqualTo(1));
+            });
+            Assert.That(message.Arguments[0].ToString(), Is.EqualTo("World"));
+        }
+
+        static async Task AssertNoMessageAsync(TestClient client, int milliseconds = 1000)
+        {
+            Assert.ThrowsAsync<TimeoutException>(async () => await client.ReadAsync().OrTimeout(milliseconds));
         }
 
         [Test]
@@ -33,21 +44,27 @@
                 await manager.OnConnectedAsync(connection1).OrTimeout(Harness.TestTimeout);
                 await manager.OnConnectedAsync(connection2).OrTimeout(Harness.TestTimeout);
 
-                await manager.SendAllAsync("Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendAllAsync("Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
 
-                Assert.IsTrue(BackplaneHarness.All.Consumed.Select<All<MyHub>>().Any());
+                Assert.That(BackplaneHarness.All.Consumed.Select<All<MyHub>>().Any(), Is.True);
 
                 var message = client1.TryRead() as InvocationMessage;
-                Assert.NotNull(message);
-                Assert.AreEqual("Hello", message.Target);
-                Assert.AreEqual(1, message.Arguments.Length);
-                Assert.AreEqual("World", (string)message.Arguments[0]);
+                Assert.That(message, Is.Not.Null);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(message.Target, Is.EqualTo("Hello"));
+                    Assert.That(message.Arguments, Has.Length.EqualTo(1));
+                });
+                Assert.That(message.Arguments[0].ToString(), Is.EqualTo("World"));
 
                 message = client2.TryRead() as InvocationMessage;
-                Assert.NotNull(message);
-                Assert.AreEqual("Hello", message.Target);
-                Assert.AreEqual(1, message.Arguments.Length);
-                Assert.AreEqual("World", (string)message.Arguments[0]);
+                Assert.That(message, Is.Not.Null);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(message.Target, Is.EqualTo("Hello"));
+                    Assert.That(message.Arguments, Has.Length.EqualTo(1));
+                });
+                Assert.That(message.Arguments[0].ToString(), Is.EqualTo("World"));
             }
         }
 
@@ -67,17 +84,23 @@
 
                 await manager.OnDisconnectedAsync(connection2).OrTimeout(Harness.TestTimeout);
 
-                await manager.SendAllAsync("Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendAllAsync("Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
 
-                Assert.IsTrue(BackplaneHarness.All.Consumed.Select<All<MyHub>>().Any());
+                Assert.That(BackplaneHarness.All.Consumed.Select<All<MyHub>>().Any(), Is.True);
 
                 var message = client1.TryRead() as InvocationMessage;
-                Assert.NotNull(message);
-                Assert.AreEqual("Hello", message.Target);
-                Assert.AreEqual(1, message.Arguments.Length);
-                Assert.AreEqual("World", (string)message.Arguments[0]);
+                Assert.That(message, Is.Not.Null);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(message.Target, Is.EqualTo("Hello"));
+                    Assert.That(message.Arguments, Has.Length.EqualTo(1));
+                });
+                Assert.Multiple(() =>
+                {
+                    Assert.That(message.Arguments[0].ToString(), Is.EqualTo("World"));
 
-                Assert.Null(client2.TryRead());
+                    Assert.That(client2.TryRead(), Is.Null);
+                });
             }
         }
 
@@ -100,17 +123,23 @@
                 // Because connection is local, should not have any GroupManagement
                 //Assert.IsFalse(backplaneConsumers.GroupManagementConsumer.Consumed.Select<GroupManagement<MyHub>>().Any());
 
-                await manager.SendGroupAsync("group", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendGroupAsync("group", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
 
-                Assert.IsTrue(BackplaneHarness.Group.Consumed.Select<Group<MyHub>>().Any());
+                Assert.That(BackplaneHarness.Group.Consumed.Select<Group<MyHub>>().Any(), Is.True);
 
                 var message = client1.TryRead() as InvocationMessage;
-                Assert.NotNull(message);
-                Assert.AreEqual("Hello", message.Target);
-                Assert.AreEqual(1, message.Arguments.Length);
-                Assert.AreEqual("World", (string)message.Arguments[0]);
+                Assert.That(message, Is.Not.Null);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(message.Target, Is.EqualTo("Hello"));
+                    Assert.That(message.Arguments, Has.Length.EqualTo(1));
+                });
+                Assert.Multiple(() =>
+                {
+                    Assert.That(message.Arguments[0].ToString(), Is.EqualTo("World"));
 
-                Assert.Null(client2.TryRead());
+                    Assert.That(client2.TryRead(), Is.Null);
+                });
             }
         }
 
@@ -135,11 +164,11 @@
 
                 await Task.Delay(2000);
 
-                await manager.SendGroupAsync("name", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendGroupAsync("name", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
 
                 await Task.Delay(2000);
 
-                Assert.Null(client.TryRead());
+                Assert.That(client.TryRead(), Is.Null);
             }
         }
 
@@ -156,8 +185,8 @@
 
                 await manager.RemoveFromGroupAsync(connection.ConnectionId, "name").OrTimeout(Harness.TestTimeout);
 
-                Assert.IsFalse(BackplaneHarness.GroupManagement.Consumed.Select<GroupManagement<MyHub>>()
-                    .Any()); // Should not have published, because connection was local
+                Assert.That(BackplaneHarness.GroupManagement.Consumed.Select<GroupManagement<MyHub>>()
+                    .Any(), Is.False); // Should not have published, because connection was local
             }
         }
 
@@ -175,10 +204,10 @@
                 await manager.AddToGroupAsync(connection.ConnectionId, "name").OrTimeout(Harness.TestTimeout);
                 await manager.AddToGroupAsync(connection.ConnectionId, "name").OrTimeout(Harness.TestTimeout);
 
-                await manager.SendGroupAsync("name", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendGroupAsync("name", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
 
                 await AssertMessageAsync(client);
-                Assert.Null(client.TryRead());
+                Assert.That(client.TryRead(), Is.Null);
             }
         }
 
@@ -201,13 +230,13 @@
                 await manager.OnConnectedAsync(connection2).OrTimeout(Harness.TestTimeout);
                 await manager.AddToGroupAsync(connection2.ConnectionId, "group").OrTimeout(Harness.TestTimeout);
 
-                await manager.SendGroupAsync("group", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendGroupAsync("group", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
                 // connection1 will throw when receiving a group message, we are making sure other connections
                 // are not affected by another connection throwing
                 await AssertMessageAsync(client2);
 
                 // Repeat to check that group can still be sent to
-                await manager.SendGroupAsync("group", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendGroupAsync("group", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
                 await AssertMessageAsync(client2);
             }
         }
@@ -229,10 +258,109 @@
                 await manager.OnConnectedAsync(connection2).OrTimeout(Harness.TestTimeout);
                 await manager.OnConnectedAsync(connection3).OrTimeout(Harness.TestTimeout);
 
-                await manager.SendUserAsync("userA", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendUserAsync("userA", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
                 await AssertMessageAsync(client1);
                 await AssertMessageAsync(client2);
             }
+        }
+
+        [Test]
+        public async Task ConnectionShouldReceiveMessage()
+        {
+            using var client = new TestClient();
+
+            MassTransitHubLifetimeManager<MyHub> manager = BackplaneHarness.HubLifetimeManager;
+
+            var connection = HubConnectionContextUtils.Create(client.Connection);
+
+            await manager.OnConnectedAsync(connection).OrTimeout(Harness.TestTimeout);
+
+            await manager.SendConnectionAsync(connection.ConnectionId, "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
+            await AssertMessageAsync(client);
+        }
+
+        [Test]
+        public async Task ConnectionShouldNotBeReceivedIfConnectionIdCasingIsOff()
+        {
+            using var client = new TestClient();
+
+            MassTransitHubLifetimeManager<MyHub> manager = BackplaneHarness.HubLifetimeManager;
+
+            var connection = HubConnectionContextUtils.Create(client.Connection);
+
+            await manager.OnConnectedAsync(connection).OrTimeout(Harness.TestTimeout);
+
+            await manager.SendConnectionAsync(connection.ConnectionId.ToUpper(), "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
+            await AssertNoMessageAsync(client);
+        }
+
+        [Test]
+        public async Task ExcludedConnectionShouldNotReceiveSendAllMessage()
+        {
+            using var client = new TestClient();
+
+            MassTransitHubLifetimeManager<MyHub> manager = BackplaneHarness.HubLifetimeManager;
+
+            var connection = HubConnectionContextUtils.Create(client.Connection);
+
+            await manager.OnConnectedAsync(connection).OrTimeout(Harness.TestTimeout);
+
+            await manager.SendAllExceptAsync("Hello", new object[] { "World" }, new[] { connection.ConnectionId }).OrTimeout(Harness.TestTimeout);
+            await AssertNoMessageAsync(client);
+        }
+
+        [Test]
+        public async Task ExcludedConnectionShouldReceiveSendAllMessageWhenCasingIsOff()
+        {
+            using var client = new TestClient();
+
+            MassTransitHubLifetimeManager<MyHub> manager = BackplaneHarness.HubLifetimeManager;
+
+            var connection = HubConnectionContextUtils.Create(client.Connection);
+
+            await manager.OnConnectedAsync(connection).OrTimeout(Harness.TestTimeout);
+
+            await manager.SendAllExceptAsync("Hello", new object[] { "World" }, new[] { connection.ConnectionId.ToUpper() }).OrTimeout(Harness.TestTimeout);
+            await AssertMessageAsync(client);
+        }
+
+        [Test]
+        public async Task ExcludedConnectionShouldNotReceiveSendGroupMessage()
+        {
+            const string groupName = "group";
+
+            using var client = new TestClient();
+
+            MassTransitHubLifetimeManager<MyHub> manager = BackplaneHarness.HubLifetimeManager;
+
+            var connection = HubConnectionContextUtils.Create(client.Connection);
+
+            await manager.OnConnectedAsync(connection).OrTimeout(Harness.TestTimeout);
+
+            await manager.AddToGroupAsync(connection.ConnectionId, groupName).OrTimeout(Harness.TestTimeout);
+
+            await manager.SendGroupExceptAsync(groupName, "Hello", new object[] { "World" }, new[] { connection.ConnectionId }).OrTimeout(Harness.TestTimeout);
+            await AssertNoMessageAsync(client);
+        }
+
+        [Test]
+        public async Task ExcludedConnectionShouldReceiveSendGroupMessageWhenCasingIsOff()
+        {
+            const string groupName = "group";
+
+            using var client = new TestClient();
+
+            MassTransitHubLifetimeManager<MyHub> manager = BackplaneHarness.HubLifetimeManager;
+
+            var connection = HubConnectionContextUtils.Create(client.Connection);
+
+            await manager.OnConnectedAsync(connection).OrTimeout(Harness.TestTimeout);
+
+            await manager.AddToGroupAsync(connection.ConnectionId, groupName).OrTimeout(Harness.TestTimeout);
+
+            await manager.SendGroupExceptAsync(groupName, "Hello", new object[] { "World" }, new[] { connection.ConnectionId.ToUpper() })
+                .OrTimeout(Harness.TestTimeout);
+            await AssertMessageAsync(client);
         }
 
         [Test]
@@ -252,13 +380,13 @@
                 await manager.OnConnectedAsync(connection2).OrTimeout(Harness.TestTimeout);
                 await manager.OnConnectedAsync(connection3).OrTimeout(Harness.TestTimeout);
 
-                await manager.SendUserAsync("userA", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendUserAsync("userA", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
                 await AssertMessageAsync(client1);
                 await AssertMessageAsync(client2);
 
                 // Disconnect one connection for the user
                 await manager.OnDisconnectedAsync(connection1).OrTimeout(Harness.TestTimeout);
-                await manager.SendUserAsync("userA", "Hello", new object[] {"World"}).OrTimeout(Harness.TestTimeout);
+                await manager.SendUserAsync("userA", "Hello", new object[] { "World" }).OrTimeout(Harness.TestTimeout);
                 await AssertMessageAsync(client2);
             }
         }

@@ -1,6 +1,5 @@
 namespace MassTransit.TestFramework
 {
-    using System;
     using System.Threading.Tasks;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Logging;
@@ -8,14 +7,14 @@ namespace MassTransit.TestFramework
     using Testing;
 
 
-    public class FutureTestFixture
+    public abstract class FutureTestFixture
     {
         readonly IFutureTestFixtureConfigurator _testFixtureConfigurator;
 
         protected ServiceProvider Provider;
         protected ITestHarness TestHarness;
 
-        public FutureTestFixture(IFutureTestFixtureConfigurator testFixtureConfigurator)
+        protected FutureTestFixture(IFutureTestFixtureConfigurator testFixtureConfigurator)
         {
             _testFixtureConfigurator = testFixtureConfigurator;
         }
@@ -43,8 +42,7 @@ namespace MassTransit.TestFramework
 
             await _testFixtureConfigurator.OneTimeSetup(Provider);
 
-            TestHarness = Provider.GetRequiredService<ITestHarness>();
-            TestHarness.TestTimeout = TimeSpan.FromSeconds(5);
+            TestHarness = Provider.GetTestHarness();
 
             await TestHarness.Start();
         }

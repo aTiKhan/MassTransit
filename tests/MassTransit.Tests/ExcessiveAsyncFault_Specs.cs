@@ -6,7 +6,6 @@
         using System.Linq;
         using System.Threading.Tasks;
         using MassTransit.Testing;
-        using Metadata;
         using NUnit.Framework;
         using TestFramework;
         using TestFramework.Messages;
@@ -26,10 +25,10 @@
 
                 IReceivedMessage<Fault<PingMessage>>[] messages = _consumer.Received.Select<Fault<PingMessage>>().Take(limit).ToArray();
 
-                Assert.AreEqual(limit, messages.Length);
+                Assert.That(messages, Has.Length.EqualTo(limit));
 
-                Assert.AreEqual(limit,
-                    messages.Select(x => x.Context.Message.Exceptions[0].ExceptionType == TypeCache<IntentionalTestException>.ShortName).Count());
+                Assert.That(messages.Select(x => x.Context.Message.Exceptions[0].ExceptionType == TypeCache<IntentionalTestException>.ShortName).Count(),
+                    Is.EqualTo(limit));
             }
 
             PingConsumer _consumer;

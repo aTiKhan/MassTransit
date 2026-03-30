@@ -3,6 +3,7 @@ namespace MassTransit.Scheduling
     using System;
     using System.Threading;
     using System.Threading.Tasks;
+    using Middleware;
 
 
     public class ServiceBusScheduleMessageProvider :
@@ -15,10 +16,20 @@ namespace MassTransit.Scheduling
             _sendEndpointProvider = sendEndpointProvider;
         }
 
+        public ServiceBusScheduleMessageProvider(ConsumeContext consumeContext)
+        {
+            var context = InternalOutboxExtensions.SkipOutbox(consumeContext);
+
+            _sendEndpointProvider = context;
+        }
+
         public async Task<ScheduledMessage<T>> ScheduleSend<T>(Uri destinationAddress, DateTime scheduledTime, T message, IPipe<SendContext<T>> pipe,
             CancellationToken cancellationToken)
             where T : class
         {
+            if (!MessageTypeCache<T>.IsValidMessageType)
+                throw new ArgumentException(MessageTypeCache<T>.InvalidMessageTypeReason, nameof(T));
+
             var scheduleMessagePipe = new ScheduleSendPipe<T>(pipe, scheduledTime);
 
             var endpoint = await _sendEndpointProvider.GetSendEndpoint(destinationAddress).ConfigureAwait(false);
@@ -28,12 +39,12 @@ namespace MassTransit.Scheduling
             return new ScheduledMessageHandle<T>(scheduleMessagePipe.ScheduledMessageId ?? NewId.NextGuid(), scheduledTime, destinationAddress, message);
         }
 
-        public Task CancelScheduledSend(Guid tokenId)
+        public Task CancelScheduledSend(Guid tokenId, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
-        public async Task CancelScheduledSend(Uri destinationAddress, Guid tokenId)
+        public async Task CancelScheduledSend(Uri destinationAddress, Guid tokenId, CancellationToken cancellationToken)
         {
             var endpoint = await _sendEndpointProvider.GetSendEndpoint(destinationAddress).ConfigureAwait(false);
 
@@ -42,7 +53,7 @@ namespace MassTransit.Scheduling
                 InVar.CorrelationId,
                 InVar.Timestamp,
                 TokenId = tokenId
-            }).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
         }
     }
 }

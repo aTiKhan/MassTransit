@@ -3,6 +3,7 @@ namespace MassTransit.Configuration
     using System;
     using DependencyInjection.Registration;
     using Internals;
+    using Metadata;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -18,10 +19,10 @@ namespace MassTransit.Configuration
         public static IConsumerRegistration RegisterConsumer<T>(this IServiceCollection collection, IContainerRegistrar registrar)
             where T : class, IConsumer
         {
-            if (MessageTypeCache<T>.HasSagaInterfaces)
+            if (RegistrationMetadata.IsSaga(typeof(T)))
                 throw new ArgumentException($"{TypeCache<T>.ShortName} is a saga, and cannot be registered as a consumer", nameof(T));
 
-            return new Consumer<T>().Register(collection, registrar);
+            return new ConsumerRegistrar<T>().Register(collection, registrar);
         }
 
         public static IConsumerRegistration RegisterConsumer<T, TDefinition>(this IServiceCollection collection)
@@ -35,10 +36,10 @@ namespace MassTransit.Configuration
             where T : class, IConsumer
             where TDefinition : class, IConsumerDefinition<T>
         {
-            if (MessageTypeCache<T>.HasSagaInterfaces)
+            if (RegistrationMetadata.IsSaga(typeof(T)))
                 throw new ArgumentException($"{TypeCache<T>.ShortName} is a saga, and cannot be registered as a consumer", nameof(T));
 
-            return new ConsumerDefinition<T, TDefinition>().Register(collection, registrar);
+            return new ConsumerDefinitionRegistrar<T, TDefinition>().Register(collection, registrar);
         }
 
         public static IConsumerRegistration RegisterConsumer<T>(this IServiceCollection collection, Type consumerDefinitionType)
@@ -53,7 +54,7 @@ namespace MassTransit.Configuration
             if (consumerDefinitionType == null)
                 return RegisterConsumer<T>(collection, registrar);
 
-            if (MessageTypeCache<T>.HasSagaInterfaces)
+            if (RegistrationMetadata.IsSaga(typeof(T)))
                 throw new ArgumentException($"{TypeCache<T>.ShortName} is a saga, and cannot be registered as a consumer", nameof(T));
 
             if (!consumerDefinitionType.ClosesType(typeof(IConsumerDefinition<>), out Type[] types) || types[0] != typeof(T))
@@ -62,33 +63,60 @@ namespace MassTransit.Configuration
                     nameof(consumerDefinitionType));
             }
 
-            var register = (IRegister)Activator.CreateInstance(typeof(ConsumerDefinition<,>).MakeGenericType(typeof(T), consumerDefinitionType));
+            var register = (IConsumerRegistrar)Activator.CreateInstance(
+                typeof(ConsumerDefinitionRegistrar<,>).MakeGenericType(typeof(T), consumerDefinitionType));
+
+            return register.Register(collection, registrar);
+        }
+
+        public static IConsumerRegistration RegisterConsumer(this IServiceCollection collection, IContainerRegistrar registrar, Type consumerType,
+            Type consumerDefinitionType = null)
+        {
+            if (RegistrationMetadata.IsSaga(consumerType))
+                throw new ArgumentException($"{TypeCache.GetShortName(consumerType)} is a saga, and cannot be registered as a consumer", nameof(consumerType));
+
+            if (consumerDefinitionType != null)
+            {
+                if (!consumerDefinitionType.ClosesType(typeof(IConsumerDefinition<>), out Type[] types) || types[0] != consumerType)
+                {
+                    throw new ArgumentException(
+                        $"{TypeCache.GetShortName(consumerDefinitionType)} is not a consumer definition of {TypeCache.GetShortName(consumerType)}",
+                        nameof(consumerDefinitionType));
+                }
+
+                var consumerRegistrar = (IConsumerRegistrar)Activator.CreateInstance(
+                    typeof(ConsumerDefinitionRegistrar<,>).MakeGenericType(consumerType, consumerDefinitionType));
+
+                return consumerRegistrar.Register(collection, registrar);
+            }
+
+            var register = (IConsumerRegistrar)Activator.CreateInstance(typeof(ConsumerRegistrar<>).MakeGenericType(consumerType));
 
             return register.Register(collection, registrar);
         }
 
 
-        interface IRegister
+        interface IConsumerRegistrar
         {
             IConsumerRegistration Register(IServiceCollection collection, IContainerRegistrar registrar);
         }
 
 
-        class Consumer<TConsumer> :
-            IRegister
+        class ConsumerRegistrar<TConsumer> :
+            IConsumerRegistrar
             where TConsumer : class, IConsumer
         {
             public virtual IConsumerRegistration Register(IServiceCollection collection, IContainerRegistrar registrar)
             {
                 collection.TryAddScoped<TConsumer>();
 
-                return registrar.GetOrAdd<IConsumerRegistration>(typeof(TConsumer), _ => new ConsumerRegistration<TConsumer>());
+                return registrar.GetOrAddRegistration<IConsumerRegistration>(typeof(TConsumer), _ => new ConsumerRegistration<TConsumer>(registrar));
             }
         }
 
 
-        class ConsumerDefinition<TConsumer, TDefinition> :
-            Consumer<TConsumer>
+        class ConsumerDefinitionRegistrar<TConsumer, TDefinition> :
+            ConsumerRegistrar<TConsumer>
             where TDefinition : class, IConsumerDefinition<TConsumer>
             where TConsumer : class, IConsumer
         {
@@ -96,8 +124,7 @@ namespace MassTransit.Configuration
             {
                 var registration = base.Register(collection, registrar);
 
-                collection.AddSingleton<TDefinition>();
-                collection.AddSingleton<IConsumerDefinition<TConsumer>>(provider => provider.GetRequiredService<TDefinition>());
+                registrar.AddDefinition<IConsumerDefinition<TConsumer>, TDefinition>();
 
                 return registration;
             }

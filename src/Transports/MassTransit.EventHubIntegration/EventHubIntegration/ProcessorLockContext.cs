@@ -1,107 +1,91 @@
 namespace MassTransit.EventHubIntegration
 {
     using System;
+    using System.Threading;
     using System.Threading.Tasks;
+    using Azure.Messaging.EventHubs;
     using Azure.Messaging.EventHubs.Processor;
     using Checkpoints;
-    using MassTransit.Configuration;
     using Util;
 
 
     public class ProcessorLockContext :
-        IProcessorLockContext
+        IProcessorLockContext,
+        ProcessorClientBuilderContext
     {
-        readonly SingleThreadedDictionary<string, PartitionCheckpointData> _data = new SingleThreadedDictionary<string, PartitionCheckpointData>();
-        readonly IHostConfiguration _hostConfiguration;
+        readonly ProcessorContext _context;
+        readonly SingleThreadedDictionary<string, PartitionCheckpointData> _data;
+        readonly PendingConfirmationCollection _pending;
         readonly ReceiveSettings _receiveSettings;
 
-        public ProcessorLockContext(IHostConfiguration hostConfiguration, ReceiveSettings receiveSettings)
+        public ProcessorLockContext(ProcessorContext context, ReceiveSettings receiveSettings, CancellationToken cancellationToken)
         {
-            _hostConfiguration = hostConfiguration;
+            _context = context;
             _receiveSettings = receiveSettings;
+            _pending = new PendingConfirmationCollection(cancellationToken);
+            _data = new SingleThreadedDictionary<string, PartitionCheckpointData>(StringComparer.Ordinal);
+
+            Client = context.GetClient(this);
         }
 
-        public async Task Pending(ProcessEventArgs eventArgs)
-        {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+        public EventProcessorClient Client { get; }
 
-            if (_data.TryGetValue(eventArgs.Partition.PartitionId, out var data))
-                await data.Pending(eventArgs).ConfigureAwait(false);
+        public ValueTask DisposeAsync()
+        {
+            _context.ReleaseClient(this);
+
+            _pending.Dispose();
+
+            return default;
+        }
+
+        public Task Pending(ProcessEventArgs eventArgs)
+        {
+            LogContext.SetCurrentIfNull(_context.LogContext);
+
+            return _data.TryGetValue(eventArgs.Partition.PartitionId, out var data) ? data.Pending(eventArgs) : Task.CompletedTask;
         }
 
         public Task Faulted(ProcessEventArgs eventArgs, Exception exception)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            if (_data.TryGetValue(eventArgs.Partition.PartitionId, out var data))
-                data.Faulted(eventArgs, exception);
+            _pending.Faulted(eventArgs, exception);
 
             return Task.CompletedTask;
         }
 
         public Task Complete(ProcessEventArgs eventArgs)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            if (_data.TryGetValue(eventArgs.Partition.PartitionId, out var data))
-                data.Complete(eventArgs);
+            _pending.Complete(eventArgs);
 
             return Task.CompletedTask;
         }
 
-        public async Task OnPartitionInitializing(PartitionInitializingEventArgs eventArgs)
+        public void Canceled(ProcessEventArgs eventArgs, CancellationToken cancellationToken)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            _data.TryAdd(eventArgs.PartitionId, _ => new PartitionCheckpointData(_receiveSettings));
-            LogContext.Info?.Log("Partition: {PartitionId} was initialized", eventArgs.PartitionId);
+            _pending.Canceled(eventArgs, cancellationToken);
         }
 
-        public async Task OnPartitionClosing(PartitionClosingEventArgs eventArgs)
+        public Task OnPartitionInitializing(PartitionInitializingEventArgs eventArgs)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            if (_data.TryRemove(eventArgs.PartitionId, out var data))
-                await data.Close(eventArgs).ConfigureAwait(false);
+            if (_data.TryAdd(eventArgs.PartitionId, _ => new PartitionCheckpointData(_receiveSettings, _pending)))
+                LogContext.Info?.Log("Partition: {PartitionId} was initialized", eventArgs.PartitionId);
+
+            return Task.CompletedTask;
         }
 
-
-        sealed class PartitionCheckpointData
+        public Task OnPartitionClosing(PartitionClosingEventArgs eventArgs)
         {
-            readonly ChannelExecutor _executor;
-            readonly PendingConfirmationCollection _pending;
-            readonly ICheckpointer _receiver;
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            public PartitionCheckpointData(ReceiveSettings settings)
-            {
-                _executor = new ChannelExecutor(1);
-                _receiver = new BatchCheckpointer(_executor, settings);
-                _pending = new PendingConfirmationCollection(settings.EventHubName);
-            }
-
-            public Task Pending(ProcessEventArgs eventArgs)
-            {
-                var pendingConfirmation = _pending.Add(eventArgs);
-                return _receiver.Pending(pendingConfirmation);
-            }
-
-            public void Complete(ProcessEventArgs eventArgs)
-            {
-                _pending.Complete(eventArgs.Data.Offset);
-            }
-
-            public void Faulted(ProcessEventArgs eventArgs, Exception exception)
-            {
-                _pending.Faulted(eventArgs.Data.Offset, exception);
-            }
-
-            public async Task Close(PartitionClosingEventArgs args)
-            {
-                await _receiver.Close(args.Reason).ConfigureAwait(false);
-                await _executor.DisposeAsync().ConfigureAwait(false);
-
-                LogContext.Info?.Log("Partition: {PartitionId} was closed, reason: {Reason}", args.PartitionId, args.Reason);
-            }
+            return _data.TryRemove(eventArgs.PartitionId, out var data) ? data.Close(eventArgs) : Task.CompletedTask;
         }
     }
 }

@@ -4,6 +4,7 @@ namespace MassTransit.Transports
     using System.Threading;
     using System.Threading.Tasks;
     using Events;
+    using Internals;
     using Util;
 
 
@@ -54,9 +55,12 @@ namespace MassTransit.Transports
 
         public EndpointHealthResult HealthResult { get; set; }
 
+        public bool IsBusEndpoint => _context.IsBusEndpoint;
+
         public Uri InputAddress { get; set; }
 
         public Task<ReceiveEndpointReady> Started => _started.Task;
+        public ConnectHandle ObserverHandle { get; set; }
 
         public ReceiveEndpointHandle Start(CancellationToken cancellationToken)
         {
@@ -165,6 +169,8 @@ namespace MassTransit.Transports
 
             if (_handle != null)
             {
+                await _context.DependentsCompleted.OrCanceled(cancellationToken).ConfigureAwait(false);
+
                 await _context.EndpointObservers.Stopping(new ReceiveEndpointStoppingEvent(_context.InputAddress, this, removed)).ConfigureAwait(false);
 
                 await _handle.TransportHandle.Stop(cancellationToken).ConfigureAwait(false);

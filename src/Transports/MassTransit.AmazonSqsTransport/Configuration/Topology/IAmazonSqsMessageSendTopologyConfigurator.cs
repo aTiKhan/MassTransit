@@ -1,20 +1,15 @@
-namespace MassTransit
+namespace MassTransit;
+
+public interface IAmazonSqsMessageSendTopologyConfigurator<TMessage> :
+    IMessageSendTopologyConfigurator<TMessage>,
+    IAmazonSqsMessageSendTopology<TMessage>,
+    IAmazonSqsMessageSendTopologyConfigurator
+    where TMessage : class
 {
-    using AmazonSqsTransport.Topology;
-    using Topology;
+}
 
 
-    public interface IAmazonSqsMessageSendTopologyConfigurator<TMessage> :
-        IMessageSendTopologyConfigurator<TMessage>,
-        IAmazonSqsMessageSendTopology<TMessage>,
-        IAmazonSqsMessageSendTopologyConfigurator
-        where TMessage : class
-    {
-    }
-
-
-    public interface IAmazonSqsMessageSendTopologyConfigurator :
-        IMessageSendTopologyConfigurator
-    {
-    }
+public interface IAmazonSqsMessageSendTopologyConfigurator :
+    IMessageSendTopologyConfigurator
+{
 }

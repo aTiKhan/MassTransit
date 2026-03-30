@@ -25,6 +25,7 @@ namespace MassTransit.Configuration
         IsolationLevel _isolationLevel;
         ILockStatementProvider _lockStatementProvider;
         Func<IQueryable<TSaga>, IQueryable<TSaga>> _queryCustomization;
+        bool _isTransactionEnabled = true;
 
         public EntityFrameworkSagaRepositoryConfigurator()
         {
@@ -105,8 +106,10 @@ namespace MassTransit.Configuration
             else
                 configurator.TryAddSingleton(provider => CreatePessimisticLockStrategy());
 
-            configurator.RegisterSagaRepository<TSaga, DbContext, SagaConsumeContextFactory<DbContext, TSaga>,
-                EntityFrameworkSagaRepositoryContextFactory<TSaga>>();
+            configurator.RegisterLoadSagaRepository<TSaga, EntityFrameworkSagaRepositoryContextFactory<TSaga>>();
+            configurator.RegisterQuerySagaRepository<TSaga, EntityFrameworkSagaRepositoryContextFactory<TSaga>>();
+            configurator
+                .RegisterSagaRepository<TSaga, DbContext, SagaConsumeContextFactory<DbContext, TSaga>, EntityFrameworkSagaRepositoryContextFactory<TSaga>>();
         }
 
         static void AddDbContext<TContext, TImplementation>(IServiceCollection collection,
@@ -148,13 +151,9 @@ namespace MassTransit.Configuration
 
         ISagaRepositoryLockStrategy<TSaga> CreateOptimisticLockStrategy()
         {
-            ILoadQueryProvider<TSaga> queryProvider = new DefaultSagaLoadQueryProvider<TSaga>();
-            if (_queryCustomization != null)
-                queryProvider = new CustomSagaLoadQueryProvider<TSaga>(queryProvider, _queryCustomization);
+            var queryExecutor = new OptimisticLoadQueryExecutor<TSaga>(_queryCustomization);
 
-            var queryExecutor = new OptimisticLoadQueryExecutor<TSaga>(queryProvider);
-
-            return new OptimisticSagaRepositoryLockStrategy<TSaga>(queryProvider, queryExecutor, _isolationLevel);
+            return new OptimisticSagaRepositoryLockStrategy<TSaga>(queryExecutor, _queryCustomization, _isolationLevel, _isTransactionEnabled);
         }
 
         ISagaRepositoryLockStrategy<TSaga> CreatePessimisticLockStrategy()
@@ -164,6 +163,12 @@ namespace MassTransit.Configuration
             var queryExecutor = new PessimisticLoadQueryExecutor<TSaga>(statementProvider, _queryCustomization);
 
             return new PessimisticSagaRepositoryLockStrategy<TSaga>(queryExecutor, _isolationLevel);
+        }
+
+        public void SetOptimisticConcurrency(bool useTransaction = true)
+        {
+            _concurrencyMode = ConcurrencyMode.Optimistic;
+            _isTransactionEnabled = useTransaction;
         }
     }
 }

@@ -1,7 +1,6 @@
 namespace MassTransit
 {
     using System;
-    using Courier;
 
 
     public interface IActivityDefinition :
@@ -40,6 +39,8 @@ namespace MassTransit
         /// </summary>
         /// <param name="endpointConfigurator"></param>
         /// <param name="compensateActivityConfigurator"></param>
-        void Configure(IReceiveEndpointConfigurator endpointConfigurator, ICompensateActivityConfigurator<TActivity, TLog> compensateActivityConfigurator);
+        /// <param name="context"></param>
+        void Configure(IReceiveEndpointConfigurator endpointConfigurator, ICompensateActivityConfigurator<TActivity, TLog> compensateActivityConfigurator,
+            IRegistrationContext context);
     }
 }

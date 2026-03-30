@@ -18,7 +18,12 @@ namespace MassTransit.Transports
         IReceiveEndpointObserverConnector,
         IProbeSite
     {
+        TimeSpan? ConsumerStopTimeout { get; }
+        TimeSpan? StopTimeout { get; }
+
         Uri InputAddress { get; }
+
+        bool IsBusEndpoint { get; }
 
         IReceiveEndpointObserver EndpointObservers { get; }
 
@@ -39,7 +44,12 @@ namespace MassTransit.Transports
         /// <summary>
         /// Task completed when dependencies are ready
         /// </summary>
-        Task Dependencies { get; }
+        Task DependenciesReady { get; }
+
+        /// <summary>
+        /// Task completed when dependants are completed
+        /// </summary>
+        Task DependentsCompleted { get; }
 
         /// <summary>
         /// If true (the default), faults should be published when no ResponseAddress or FaultAddress are present.
@@ -69,9 +79,15 @@ namespace MassTransit.Transports
         void Reset();
 
         /// <summary>
-        /// Add an agent, which should be stopped during shutdown
+        /// Add an consume-side agent, which should be stopped during shutdown
         /// </summary>
         /// <param name="agent"></param>
         void AddConsumeAgent(IAgent agent);
+
+        /// <summary>
+        /// Add an agent, which should be stopped during shutdown after consume/send agents have been stopped
+        /// </summary>
+        /// <param name="agent"></param>
+        void AddSendAgent(IAgent agent);
     }
 }

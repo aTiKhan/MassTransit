@@ -4,6 +4,7 @@ namespace MassTransit.Serialization
     using System;
     using System.Globalization;
     using System.IO;
+    using System.Linq;
     using System.Net.Mime;
     using System.Runtime.Serialization;
     using System.Text;
@@ -48,6 +49,11 @@ namespace MassTransit.Serialization
                     document = XDocument.Load(xmlReader);
                 }
 
+                XNamespace ns = "http://www.w3.org/2001/XMLSchema-instance";
+                document.Descendants()
+                    .Where(node => (string)node.Attribute(ns + "nil")! == "true")
+                    .Remove();
+
                 var json = new StringBuilder(1024);
 
                 using (var stringWriter = new StringWriter(json, CultureInfo.InvariantCulture))
@@ -80,6 +86,11 @@ namespace MassTransit.Serialization
             {
                 throw new SerializationException("An exception occurred while deserializing the message envelope", ex);
             }
+        }
+
+        public MessageBody GetMessageBody(string text)
+        {
+            return new StringMessageBody(text);
         }
     }
 }

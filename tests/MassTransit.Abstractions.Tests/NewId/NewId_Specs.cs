@@ -17,7 +17,7 @@
             var id1 = new NewId("fc070000-9565-3668-e000-08d5893343c6");
             var id2 = new NewId("fc070000-9565-3668-e000-08d5893343c6");
 
-            Assert.IsTrue(id1 == id2);
+            Assert.That(id1, Is.EqualTo(id2));
         }
 
         [Test]
@@ -26,7 +26,7 @@
             var lowerId = new NewId("fc070000-9565-3668-e000-08d5893343c6");
             var greaterId = new NewId("fc070000-9565-3668-9180-08d589338b38");
 
-            Assert.IsTrue(lowerId < greaterId);
+            Assert.That(lowerId, Is.LessThan(greaterId));
         }
 
         [Test]
@@ -35,7 +35,7 @@
             var lowerId = new NewId("fc070000-9565-3668-e000-08d5893343c6");
             var greaterId = new NewId("fc070000-9565-3668-9180-08d589338b38");
 
-            Assert.IsFalse(lowerId > greaterId);
+            Assert.That(lowerId, Is.LessThanOrEqualTo(greaterId));
         }
 
         [Test]
@@ -53,7 +53,7 @@
             if (difference < TimeSpan.Zero)
                 difference = difference.Negate();
 
-            Assert.LessOrEqual(difference, TimeSpan.FromMinutes(1));
+            Assert.That(difference, Is.LessThanOrEqualTo(TimeSpan.FromMinutes(1)));
         }
 
         [Test]
@@ -72,7 +72,7 @@
             if (difference < TimeSpan.Zero)
                 difference = difference.Negate();
 
-            Assert.LessOrEqual(difference, TimeSpan.FromMinutes(1));
+            Assert.That(difference, Is.LessThanOrEqualTo(TimeSpan.FromMinutes(1)));
         }
 
         [Test]
@@ -109,7 +109,7 @@
 
             IGrouping<NewId, NewId>[] duplicates = ids.GroupBy(x => x).Where(x => x.Count() > 1).ToArray();
 
-            Console.WriteLine("Duplicates: {0}", duplicates.Count());
+            Console.WriteLine("Duplicates: {0}", duplicates.Length);
 
             foreach (IGrouping<NewId, NewId> newId in duplicates)
                 Console.WriteLine("{0} {1}", newId.Key, newId.Count());
@@ -141,7 +141,7 @@
 
             IGrouping<NewId, NewId>[] duplicates = ids.GroupBy(x => x).Where(x => x.Count() > 1).ToArray();
 
-            Console.WriteLine("Duplicates: {0}", duplicates.Count());
+            Console.WriteLine("Duplicates: {0}", duplicates.Length);
 
             foreach (IGrouping<NewId, NewId> newId in duplicates)
                 Console.WriteLine("{0} {1}", newId.Key, newId.Count());
@@ -161,8 +161,40 @@
 
             for (var i = 0; i < limit - 1; i++)
             {
-                Assert.AreNotEqual(ids[i], ids[i + 1]);
+                Assert.That(ids[i + 1], Is.Not.EqualTo(ids[i]));
                 Console.WriteLine(ids[i]);
+            }
+        }
+
+        [Test]
+        public void Should_be_using_the_correct_algorithm()
+        {
+            NewId.SetTickProvider(new StopwatchTickProvider());
+
+            var first = NewId.NextGuid();
+            Guid[] next = NewId.NextGuid(3);
+
+            for (var i = 0; i < next.Length - 1; i++)
+            {
+                Assert.That(next[i].ToString().Substring(0, 4), Is.EqualTo(first.ToString().Substring(0, 4)));
+                Assert.That(next[i].ToString().Substring(6), Is.EqualTo(first.ToString().Substring(6)));
+                Assert.That(int.Parse(next[i].ToString().Substring(4, 2)), Is.EqualTo(i));
+            }
+        }
+
+        [Test]
+        public void Should_be_using_the_correct_algorithm_for_sequential_guids()
+        {
+            NewId.SetTickProvider(new StopwatchTickProvider());
+
+            var first = NewId.NextSequentialGuid();
+            var next = new Guid[3];
+            NewId.NextSequentialGuid(next, 0, 3);
+
+            for (var i = 0; i < next.Length - 1; i++)
+            {
+                Assert.That(next[i].ToString().Substring(0,32), Is.EqualTo(first.ToString().Substring(0,32)));
+                Assert.That(int.Parse(next[i].ToString().Substring(32,2)), Is.EqualTo(i));
             }
         }
 
@@ -184,7 +216,7 @@
 
             for (var i = 0; i < limit - 1; i++)
             {
-                Assert.AreNotEqual(ids[i], ids[i + 1]);
+                Assert.That(ids[i + 1], Is.Not.EqualTo(ids[i]));
                 var end = ids[i].ToString().Substring(32, 4);
                 if (end == "0000")
                     Console.WriteLine("{0}", ids[i].ToString());

@@ -1,107 +1,110 @@
-namespace MassTransit.RabbitMqTransport.Middleware
+namespace MassTransit.RabbitMqTransport.Middleware;
+
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Topology;
+
+
+/// <summary>
+/// Configures the broker with the supplied topology once the channel is created, to ensure
+/// that the exchanges, queues, and bindings for the channel are properly configured in RabbitMQ.
+/// </summary>
+public class ConfigureRabbitMqTopologyFilter<TSettings> :
+    IFilter<ChannelContext>
+    where TSettings : class
 {
-    using System;
-    using System.Linq;
-    using System.Threading.Tasks;
-    using Topology;
+    readonly BrokerTopology _brokerTopology;
+    readonly TSettings _settings;
 
-
-    /// <summary>
-    /// Configures the broker with the supplied topology once the model is created, to ensure
-    /// that the exchanges, queues, and bindings for the model are properly configured in RabbitMQ.
-    /// </summary>
-    public class ConfigureRabbitMqTopologyFilter<TSettings> :
-        IFilter<ModelContext>
-        where TSettings : class
+    public ConfigureRabbitMqTopologyFilter(TSettings settings, BrokerTopology brokerTopology)
     {
-        readonly BrokerTopology _brokerTopology;
-        readonly TSettings _settings;
+        _settings = settings;
+        _brokerTopology = brokerTopology;
+    }
 
-        public ConfigureRabbitMqTopologyFilter(TSettings settings, BrokerTopology brokerTopology)
+    public async Task Send(ChannelContext context, IPipe<ChannelContext> next)
+    {
+        OneTimeContext<ConfigureTopologyContext<TSettings>> oneTimeContext = await Configure(context, context.CancellationToken);
+
+        try
         {
-            _settings = settings;
-            _brokerTopology = brokerTopology;
-        }
-
-        async Task IFilter<ModelContext>.Send(ModelContext context, IPipe<ModelContext> next)
-        {
-            await context.OneTimeSetup<ConfigureTopologyContext<TSettings>>(async payload =>
-            {
-                await ConfigureTopology(context).ConfigureAwait(false);
-
-                context.GetOrAddPayload(() => _settings);
-            }, () => new Context()).ConfigureAwait(false);
-
             await next.Send(context).ConfigureAwait(false);
         }
-
-        void IProbeSite.Probe(ProbeContext context)
+        catch (Exception)
         {
-            var scope = context.CreateFilterScope("configureTopology");
+            oneTimeContext.Evict();
 
-            _brokerTopology.Probe(scope);
+            throw;
         }
+    }
 
-        async Task ConfigureTopology(ModelContext context)
+    public void Probe(ProbeContext context)
+    {
+        var scope = context.CreateFilterScope("configureTopology");
+
+        _brokerTopology.Probe(scope);
+    }
+
+    public async Task<OneTimeContext<ConfigureTopologyContext<TSettings>>> Configure(ChannelContext context, CancellationToken cancellationToken)
+    {
+        return await context.OneTimeSetup<ConfigureTopologyContext<TSettings>>(() =>
         {
-            await Task.WhenAll(_brokerTopology.Queues.Select(queue => Declare(context, (Queue)queue))).ConfigureAwait(false);
+            context.GetOrAddPayload(() => _settings);
+            return ConfigureTopology(context, cancellationToken);
+        }).ConfigureAwait(false);
+    }
 
-            await Task.WhenAll(_brokerTopology.Exchanges.Select(exchange => Declare(context, exchange))).ConfigureAwait(false);
+    async Task ConfigureTopology(ChannelContext context, CancellationToken cancellationToken)
+    {
+        await Task.WhenAll(_brokerTopology.Queues.Select(queue => Declare(context, queue, cancellationToken))).ConfigureAwait(false);
 
-            await Task.WhenAll(_brokerTopology.QueueBindings.Select(binding => Bind(context, binding))).ConfigureAwait(false);
+        await Task.WhenAll(_brokerTopology.Exchanges.Select(exchange => Declare(context, exchange, cancellationToken))).ConfigureAwait(false);
 
-            await Task.WhenAll(_brokerTopology.ExchangeBindings.Select(binding => Bind(context, binding))).ConfigureAwait(false);
-        }
+        await Task.WhenAll(_brokerTopology.QueueBindings.Select(binding => Bind(context, binding, cancellationToken))).ConfigureAwait(false);
 
-        static Task Declare(ModelContext context, Exchange exchange)
+        await Task.WhenAll(_brokerTopology.ExchangeBindings.Select(binding => Bind(context, binding, cancellationToken))).ConfigureAwait(false);
+    }
+
+    static Task Declare(ChannelContext context, Exchange exchange, CancellationToken cancellationToken)
+    {
+        RabbitMqLogMessages.DeclareExchange(exchange);
+
+        return context.ExchangeDeclare(exchange.ExchangeName, exchange.ExchangeType, exchange.Durable, exchange.AutoDelete, exchange.ExchangeArguments,
+            cancellationToken);
+    }
+
+    static async Task Declare(ChannelContext context, Queue queue, CancellationToken cancellationToken)
+    {
+        try
         {
-            RabbitMqLogMessages.DeclareExchange(exchange);
-
-            return context.ExchangeDeclare(exchange.ExchangeName, exchange.ExchangeType, exchange.Durable, exchange.AutoDelete, exchange.ExchangeArguments);
-        }
-
-        static async Task Declare(ModelContext context, Queue queue)
-        {
-            try
-            {
-                var ok = await context.QueueDeclare(queue.QueueName, queue.Durable, queue.Exclusive, queue.AutoDelete, queue.QueueArguments)
-                    .ConfigureAwait(false);
-
-                RabbitMqLogMessages.DeclareQueue(queue, ok.ConsumerCount, ok.MessageCount);
-
-                await Task.Delay(10).ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                LogContext.Error?.Log(exception, "Declare queue faulted: {Queue}", queue);
-
-                throw;
-            }
-        }
-
-        static async Task Bind(ModelContext context, ExchangeToExchangeBinding binding)
-        {
-            RabbitMqLogMessages.BindToExchange(binding);
-
-            await context.ExchangeBind(binding.Destination.ExchangeName, binding.Source.ExchangeName, binding.RoutingKey, binding.Arguments)
+            var ok = await context.QueueDeclare(queue.QueueName, queue.Durable, queue.Exclusive, queue.AutoDelete, queue.QueueArguments, cancellationToken)
                 .ConfigureAwait(false);
 
-            await Task.Delay(10).ConfigureAwait(false);
+            RabbitMqLogMessages.DeclareQueue(queue, ok.ConsumerCount, ok.MessageCount);
         }
-
-        static async Task Bind(ModelContext context, ExchangeToQueueBinding binding)
+        catch (Exception exception)
         {
-            RabbitMqLogMessages.BindToQueue(binding);
+            LogContext.Error?.Log(exception, "Declare queue faulted: {Queue}", queue);
 
-            await context.QueueBind(binding.Destination.QueueName, binding.Source.ExchangeName, binding.RoutingKey, binding.Arguments).ConfigureAwait(false);
-
-            await Task.Delay(10).ConfigureAwait(false);
+            throw;
         }
+    }
 
+    static async Task Bind(ChannelContext context, ExchangeToExchangeBinding binding, CancellationToken cancellationToken)
+    {
+        RabbitMqLogMessages.BindToExchange(binding);
 
-        class Context :
-            ConfigureTopologyContext<TSettings>
-        {
-        }
+        await context.ExchangeBind(binding.Destination.ExchangeName, binding.Source.ExchangeName, binding.RoutingKey, binding.Arguments, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    static async Task Bind(ChannelContext context, ExchangeToQueueBinding binding, CancellationToken cancellationToken)
+    {
+        RabbitMqLogMessages.BindToQueue(binding);
+
+        await context.QueueBind(binding.Destination.QueueName, binding.Source.ExchangeName, binding.RoutingKey, binding.Arguments, cancellationToken)
+            .ConfigureAwait(false);
     }
 }

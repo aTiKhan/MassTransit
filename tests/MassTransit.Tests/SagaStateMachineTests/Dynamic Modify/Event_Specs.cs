@@ -11,30 +11,36 @@
         [Test]
         public void It_should_capture_a_simple_event_name()
         {
-            Assert.AreEqual("Hello", Hello.Name);
+            Assert.That(_hello.Name, Is.EqualTo("Hello"));
         }
 
         [Test]
         public void It_should_capture_the_data_event_name()
         {
-            Assert.AreEqual("EventA", EventA.Name);
+            Assert.That(_eventA.Name, Is.EqualTo("EventA"));
+        }
+
+        [Test]
+        public void It_should_create_configured_events()
+        {
+            Assert.That(_eventB, Is.InstanceOf<TriggerEvent>());
         }
 
         [Test]
         public void It_should_create_the_proper_event_type_for_data_events()
         {
-            Assert.IsInstanceOf<MessageEvent<A>>(EventA);
+            Assert.That(_eventA, Is.InstanceOf<MessageEvent<A>>());
         }
 
         [Test]
         public void It_should_create_the_proper_event_type_for_simple_events()
         {
-            Assert.IsInstanceOf<TriggerEvent>(Hello);
+            Assert.That(_hello, Is.InstanceOf<TriggerEvent>());
         }
 
-        Event Hello;
-        Event<A> EventA;
-        StateMachine<Instance> _machine;
+        Event _hello;
+        Event<A> _eventA;
+        Event<B> _eventB;
 
 
         class Instance :
@@ -48,10 +54,11 @@
         [OneTimeSetUp]
         public void A_state_is_declared()
         {
-            _machine = MassTransitStateMachine<Instance>
+            MassTransitStateMachine<Instance>
                 .New(builder => builder
-                    .Event("Hello", out Hello)
-                    .Event("EventA", out EventA)
+                    .Event("Hello", out _hello)
+                    .Event("EventA", out _eventA)
+                    .Event("EventB", x => x.CorrelateById(ctx => ctx.Message.Id), out _eventB)
                 );
         }
 
@@ -61,11 +68,9 @@
         }
 
 
-        class TestStateMachine :
-            MassTransitStateMachine<Instance>
+        class B
         {
-            public Event Hello { get; private set; }
-            public Event<A> EventA { get; private set; }
+            public Guid Id { get; set; }
         }
     }
 }

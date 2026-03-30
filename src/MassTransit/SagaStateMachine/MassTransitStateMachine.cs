@@ -19,42 +19,43 @@
     /// as retry and policy configuration.
     /// </summary>
     /// <typeparam name="TInstance">The state instance type</typeparam>
-    public class MassTransitStateMachine<TInstance> :
+    public partial class MassTransitStateMachine<TInstance> :
         SagaStateMachine<TInstance>
         where TInstance : class, SagaStateMachineInstance
     {
-        readonly Dictionary<string, Dictionary<string, List<EventActivityBinder<TInstance>>>> _compositeBindings;
         readonly HashSet<string> _compositeEvents;
-        readonly Dictionary<string, StateMachineEvent<TInstance>> _eventCache;
+        readonly Dictionary<string, StateMachineEvent> _eventCache;
         readonly Dictionary<Event, EventCorrelation> _eventCorrelations;
-        readonly EventObservable<TInstance> _eventObservers;
+        readonly EventObservable _eventObservers;
         readonly State<TInstance> _final;
         readonly State<TInstance> _initial;
-        readonly Lazy<ConfigurationHelpers.StateMachineRegistration[]> _registrations;
+        readonly Lazy<StateMachineRegistration[]> _registrations;
         readonly Dictionary<string, State<TInstance>> _stateCache;
-        readonly StateObservable<TInstance> _stateObservers;
+        readonly StateObservable _stateObservers;
         IStateAccessor<TInstance> _accessor;
+
+        List<FieldInfo> _backingFields;
         Func<BehaviorContext<TInstance>, Task<bool>> _isCompleted;
         string _name;
+        List<PropertyInfo> _stateMachineProperties;
         UnhandledEventCallback<TInstance> _unhandledEventCallback;
 
         protected MassTransitStateMachine()
         {
-            _registrations = new Lazy<ConfigurationHelpers.StateMachineRegistration[]>(() => ConfigurationHelpers.GetRegistrations(this));
-            _stateCache = new Dictionary<string, State<TInstance>>();
-            _eventCache = new Dictionary<string, StateMachineEvent<TInstance>>();
-            _compositeBindings = new Dictionary<string, Dictionary<string, List<EventActivityBinder<TInstance>>>>();
+            _registrations = new Lazy<StateMachineRegistration[]>(() => GetRegistrations());
+            _stateCache = new Dictionary<string, State<TInstance>>(16);
+            _eventCache = new Dictionary<string, StateMachineEvent>(16);
             _compositeEvents = new HashSet<string>();
 
-            _eventObservers = new EventObservable<TInstance>();
-            _stateObservers = new StateObservable<TInstance>();
+            _eventObservers = new EventObservable();
+            _stateObservers = new StateObservable();
 
-            _initial = new StateMachineState<TInstance>((context, state) => UnhandledEvent(context, state), "Initial", _eventObservers);
+            _initial = new StateMachineState((context, state) => UnhandledEvent(context, state), "Initial", _eventObservers);
             _stateCache[_initial.Name] = _initial;
-            _final = new StateMachineState<TInstance>((context, state) => UnhandledEvent(context, state), "Final", _eventObservers);
+            _final = new StateMachineState((context, state) => UnhandledEvent(context, state), "Final", _eventObservers);
             _stateCache[_final.Name] = _final;
 
-            _accessor = new DefaultInstanceStateAccessor<TInstance>(this, _stateCache[Initial.Name], _stateObservers);
+            _accessor = new DefaultInstanceStateAccessor(this, _stateCache[Initial.Name], _stateObservers);
 
             _unhandledEventCallback = DefaultUnhandledEventCallback;
 
@@ -146,7 +147,7 @@
 
         Event StateMachine.GetEvent(string name)
         {
-            if (_eventCache.TryGetValue(name, out StateMachineEvent<TInstance> result))
+            if (_eventCache.TryGetValue(name, out var result))
                 return result.Event;
 
             throw new UnknownEventException(_name, name);
@@ -201,7 +202,7 @@
 
         public IDisposable ConnectEventObserver(Event @event, IEventObserver<TInstance> observer)
         {
-            var eventObserver = new SelectedEventObserver<TInstance>(@event, observer);
+            var eventObserver = new SelectedEventObserver(@event, observer);
 
             return _eventObservers.Connect(eventObserver);
         }
@@ -232,9 +233,9 @@
         /// </remarks>
         protected internal void InstanceState(Expression<Func<TInstance, State>> instanceStateProperty)
         {
-            var stateAccessor = new RawStateAccessor<TInstance>(this, instanceStateProperty, _stateObservers);
+            var stateAccessor = new RawStateAccessor(this, instanceStateProperty, _stateObservers);
 
-            _accessor = new InitialIfNullStateAccessor<TInstance>(_stateCache[Initial.Name], stateAccessor);
+            _accessor = new InitialIfNullStateAccessor(_stateCache[Initial.Name], stateAccessor);
         }
 
         /// <summary>
@@ -243,9 +244,9 @@
         /// <param name="instanceStateProperty"></param>
         protected internal void InstanceState(Expression<Func<TInstance, string>> instanceStateProperty)
         {
-            var stateAccessor = new StringStateAccessor<TInstance>(this, instanceStateProperty, _stateObservers);
+            var stateAccessor = new StringStateAccessor(this, instanceStateProperty, _stateObservers);
 
-            _accessor = new InitialIfNullStateAccessor<TInstance>(_stateCache[Initial.Name], stateAccessor);
+            _accessor = new InitialIfNullStateAccessor(_stateCache[Initial.Name], stateAccessor);
         }
 
         /// <summary>
@@ -255,11 +256,11 @@
         /// <param name="states">Specifies the states, in order, to which the int values should be assigned</param>
         protected internal void InstanceState(Expression<Func<TInstance, int>> instanceStateProperty, params State[] states)
         {
-            var stateIndex = new StateAccessorIndex<TInstance>(this, _initial, _final, states);
+            var stateIndex = new StateAccessorIndex(this, _initial, _final, states);
 
-            var stateAccessor = new IntStateAccessor<TInstance>(instanceStateProperty, stateIndex, _stateObservers);
+            var stateAccessor = new IntStateAccessor(instanceStateProperty, stateIndex, _stateObservers);
 
-            _accessor = new InitialIfNullStateAccessor<TInstance>(_stateCache[Initial.Name], stateAccessor);
+            _accessor = new InitialIfNullStateAccessor(_stateCache[Initial.Name], stateAccessor);
         }
 
         /// <summary>
@@ -300,7 +301,7 @@
         protected void SetCompleted(Func<TInstance, Task<bool>> completed)
         {
             _isCompleted = completed != null
-                ? (Func<BehaviorContext<TInstance>, Task<bool>>)(context => completed(context.Saga))
+                ? context => completed(context.Saga)
                 : NotCompletedByDefault;
         }
 
@@ -330,18 +331,21 @@
             return DeclareEvent(_ => new MessageEvent<T>(name), name);
         }
 
-        void DeclarePropertyBasedEvent<TEvent>(Func<PropertyInfo, TEvent> ctor, PropertyInfo property)
+        TEvent DeclarePropertyBasedEvent<TEvent>(Func<PropertyInfo, TEvent> ctor, PropertyInfo property)
             where TEvent : Event
         {
             var @event = ctor(property);
-            ConfigurationHelpers.InitializeEvent(this, property, @event);
+
+            InitializeEvent(this, property, @event);
+
+            return @event;
         }
 
         TEvent DeclareEvent<TEvent>(Func<string, TEvent> ctor, string name)
             where TEvent : Event
         {
             var @event = ctor(name);
-            _eventCache[name] = new StateMachineEvent<TInstance>(@event, false);
+            _eventCache[name] = new StateMachineEvent(@event, false);
             return @event;
         }
 
@@ -363,7 +367,7 @@
 
             _eventCorrelations.TryGetValue(@event, out var existingCorrelation);
 
-            var configurator = new MassTransitEventCorrelationConfigurator<TInstance, T>(this, @event, existingCorrelation);
+            var configurator = new StateMachineInterfaceType<TInstance, T>.MassTransitEventCorrelationConfigurator(this, @event, existingCorrelation);
 
             configureEventCorrelation(configurator);
 
@@ -379,7 +383,8 @@
         /// <param name="propertyExpression">The containing property</param>
         /// <param name="eventPropertyExpression">The event property expression</param>
         /// <param name="configureEventCorrelation">Configuration callback for the event</param>
-        protected internal void Event<TProperty, T>(Expression<Func<TProperty>> propertyExpression, Expression<Func<TProperty, Event<T>>> eventPropertyExpression,
+        protected internal void Event<TProperty, T>(Expression<Func<TProperty>> propertyExpression,
+            Expression<Func<TProperty, Event<T>>> eventPropertyExpression,
             Action<IEventCorrelationConfigurator<TInstance, T>> configureEventCorrelation)
             where TProperty : class
             where T : class
@@ -394,7 +399,7 @@
 
             _eventCorrelations.TryGetValue(@event, out var existingCorrelation);
 
-            var configurator = new MassTransitEventCorrelationConfigurator<TInstance, T>(this, @event, existingCorrelation);
+            var configurator = new StateMachineInterfaceType<TInstance, T>.MassTransitEventCorrelationConfigurator(this, @event, existingCorrelation);
 
             configureEventCorrelation(configurator);
 
@@ -422,9 +427,9 @@
 
             var @event = new MessageEvent<T>(name);
 
-            ConfigurationHelpers.InitializeEventProperty<TProperty, T>(eventProperty, propertyValue, @event);
+            InitializeEventProperty<TProperty, T>(eventProperty, propertyValue, @event);
 
-            _eventCache[name] = new StateMachineEvent<TInstance>(@event, false);
+            _eventCache[name] = new StateMachineEvent(@event, false);
         }
 
         /// <summary>
@@ -473,14 +478,14 @@
         /// <typeparam name="T">The event data type</typeparam>
         /// <param name="name">The event name (must be unique)</param>
         /// <param name="configure">Configuration callback method</param>
-        protected Event<T> Event<T>(string name, Action<IEventCorrelationConfigurator<TInstance, T>> configure)
+        protected internal Event<T> Event<T>(string name, Action<IEventCorrelationConfigurator<TInstance, T>> configure)
             where T : class
         {
             Event<T> @event = Event<T>(name);
 
             _eventCorrelations.TryGetValue(@event, out var existingCorrelation);
 
-            var configurator = new MassTransitEventCorrelationConfigurator<TInstance, T>(this, @event, existingCorrelation);
+            var configurator = new StateMachineInterfaceType<TInstance, T>.MassTransitEventCorrelationConfigurator(this, @event, existingCorrelation);
 
             configure?.Invoke(configurator);
 
@@ -497,7 +502,8 @@
         /// <param name="propertyExpression">The composite event</param>
         /// <param name="trackingPropertyExpression">The property in the instance used to track the state of the composite event</param>
         /// <param name="events">The events that must be raised before the composite event is raised</param>
-        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
+        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression,
+            Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
             params Event[] events)
         {
             return CompositeEvent(propertyExpression, trackingPropertyExpression, CompositeEventOptions.None, events);
@@ -512,7 +518,8 @@
         /// <param name="trackingPropertyExpression">The property in the instance used to track the state of the composite event</param>
         /// <param name="options">Options on the composite event</param>
         /// <param name="events">The events that must be raised before the composite event is raised</param>
-        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
+        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression,
+            Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
             CompositeEventOptions options, params Event[] events)
         {
             var trackingPropertyInfo = trackingPropertyExpression.GetPropertyInfo();
@@ -560,7 +567,8 @@
             return CompositeEvent(name, trackingPropertyExpression, CompositeEventOptions.None, events);
         }
 
-        protected internal Event CompositeEvent(string name, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression, CompositeEventOptions options,
+        protected internal Event CompositeEvent(string name, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
+            CompositeEventOptions options,
             params Event[] events)
         {
             return CompositeEvent(name, new StructCompositeEventStatusAccessor<TInstance>(trackingPropertyExpression.GetPropertyInfo()), options, events);
@@ -616,9 +624,9 @@
 
                 var @event = new TriggerEvent(eventProperty.Name);
 
-                ConfigurationHelpers.InitializeEvent(this, eventProperty, @event);
+                InitializeEvent(this, eventProperty, @event);
 
-                _eventCache[eventProperty.Name] = new StateMachineEvent<TInstance>(@event, false);
+                _eventCache[eventProperty.Name] = new StateMachineEvent(@event, false);
 
                 return @event;
             }
@@ -632,7 +640,7 @@
             {
                 var @event = new TriggerEvent(name);
 
-                _eventCache[name] = new StateMachineEvent<TInstance>(@event, false);
+                _eventCache[name] = new StateMachineEvent(@event, false);
 
                 return @event;
             }
@@ -659,7 +667,7 @@
             {
                 var flag = 1 << i;
 
-                var activity = new CompositeEventActivity<TInstance>(accessor, flag, complete, @event);
+                var activity = new CompositeEventActivity<TInstance>(accessor, flag, complete, @event, options);
 
                 bool Filter(State<TInstance> state)
                 {
@@ -676,23 +684,9 @@
 
                 foreach (State<TInstance> state in states)
                 {
-                    // Set the IsComposite flag just to make sure it is really set.
-                    var currentEvent = state.Events.FirstOrDefault(x => Equals(x, @event));
-                    if (currentEvent != null)
-                        _compositeEvents.Add(currentEvent.Name);
-
-                    // Determine which event the composited event belongs to
-                    State<TInstance> boundToState = _stateCache.Values.FirstOrDefault(s => s.Events.Any(evt => evt.Name == events[i].Name));
-                    State<TInstance> bindingState = boundToState ?? state;
-
-                    if (!_compositeBindings.ContainsKey(@event.Name))
-                        _compositeBindings[@event.Name] = new Dictionary<string, List<EventActivityBinder<TInstance>>>();
-
-                    if (!_compositeBindings[@event.Name].ContainsKey(bindingState.Name))
-                        _compositeBindings[@event.Name][bindingState.Name] = new List<EventActivityBinder<TInstance>>();
-
-                    if (_compositeBindings[@event.Name][bindingState.Name].All(x => x.Event.Name != events[i].Name))
-                        _compositeBindings[@event.Name][bindingState.Name].Add(When(events[i]).Execute(activity));
+                    During(state,
+                        When(events[i])
+                            .Execute(activity));
                 }
             }
 
@@ -715,7 +709,7 @@
             if (TryGetState(name, out State<TInstance> foundState))
                 return foundState;
 
-            var state = new StateMachineState<TInstance>((c, s) => UnhandledEvent(c, s), name, _eventObservers);
+            var state = new StateMachineState((c, s) => UnhandledEvent(c, s), name, _eventObservers);
             SetState(name, state);
 
             return state;
@@ -728,13 +722,13 @@
             var propertyValue = property.GetValue(this);
 
             // If the state was already defined, don't define it again
-            var existingState = propertyValue as StateMachineState<TInstance>;
+            var existingState = propertyValue as StateMachineState;
             if (name.Equals(existingState?.Name))
                 return;
 
-            var state = new StateMachineState<TInstance>((c, s) => UnhandledEvent(c, s), name, _eventObservers);
+            var state = new StateMachineState((c, s) => UnhandledEvent(c, s), name, _eventObservers);
 
-            ConfigurationHelpers.InitializeState(this, property, state);
+            InitializeState(this, property, state);
 
             SetState(name, state);
         }
@@ -757,28 +751,28 @@
 
             var name = $"{property.Name}.{stateProperty.Name}";
 
-            StateMachineState<TInstance> existingState = GetStateProperty(stateProperty, propertyValue);
+            var existingState = GetStateProperty(stateProperty, propertyValue);
             if (name.Equals(existingState?.Name))
                 return;
 
-            var state = new StateMachineState<TInstance>((c, s) => UnhandledEvent(c, s), name, _eventObservers);
+            var state = new StateMachineState((c, s) => UnhandledEvent(c, s), name, _eventObservers);
 
-            ConfigurationHelpers.InitializeStateProperty(stateProperty, propertyValue, state);
+            InitializeStateProperty(stateProperty, propertyValue, state);
 
             SetState(name, state);
         }
 
-        static StateMachineState<TInstance> GetStateProperty<TProperty>(PropertyInfo stateProperty, TProperty propertyValue)
+        static StateMachineState GetStateProperty<TProperty>(PropertyInfo stateProperty, TProperty propertyValue)
             where TProperty : class
         {
             if (stateProperty.CanRead)
-                return stateProperty.GetValue(propertyValue) as StateMachineState<TInstance>;
+                return stateProperty.GetValue(propertyValue) as StateMachineState;
 
             var objectProperty = propertyValue.GetType().GetProperty(stateProperty.Name, typeof(State));
             if (objectProperty == null || !objectProperty.CanRead)
                 throw new ArgumentException($"The state property is not readable: {stateProperty.Name}");
 
-            return objectProperty.GetValue(propertyValue) as StateMachineState<TInstance>;
+            return objectProperty.GetValue(propertyValue) as StateMachineState;
         }
 
         /// <summary>
@@ -801,13 +795,13 @@
             var propertyValue = property.GetValue(this);
 
             // If the state was already defined, don't define it again
-            var existingState = propertyValue as StateMachineState<TInstance>;
+            var existingState = propertyValue as StateMachineState;
             if (name.Equals(existingState?.Name) && superState.Name.Equals(existingState?.SuperState?.Name))
                 return;
 
-            var state = new StateMachineState<TInstance>((c, s) => UnhandledEvent(c, s), name, _eventObservers, superStateInstance);
+            var state = new StateMachineState((c, s) => UnhandledEvent(c, s), name, _eventObservers, superStateInstance);
 
-            ConfigurationHelpers.InitializeState(this, property, state);
+            InitializeState(this, property, state);
 
             SetState(name, state);
         }
@@ -825,7 +819,7 @@
                 superState.Name.Equals(existingState?.SuperState?.Name))
                 return existingState;
 
-            var state = new StateMachineState<TInstance>((c, s) => UnhandledEvent(c, s), name, _eventObservers, superStateInstance);
+            var state = new StateMachineState((c, s) => UnhandledEvent(c, s), name, _eventObservers, superStateInstance);
 
             SetState(name, state);
             return state;
@@ -855,13 +849,13 @@
 
             var name = $"{property.Name}.{stateProperty.Name}";
 
-            StateMachineState<TInstance> existingState = GetStateProperty(stateProperty, propertyValue);
+            var existingState = GetStateProperty(stateProperty, propertyValue);
             if (name.Equals(existingState?.Name) && superState.Name.Equals(existingState?.SuperState?.Name))
                 return;
 
-            var state = new StateMachineState<TInstance>((c, s) => UnhandledEvent(c, s), name, _eventObservers, superStateInstance);
+            var state = new StateMachineState((c, s) => UnhandledEvent(c, s), name, _eventObservers, superStateInstance);
 
-            ConfigurationHelpers.InitializeStateProperty(stateProperty, propertyValue, state);
+            InitializeStateProperty(stateProperty, propertyValue, state);
 
             SetState(name, state);
         }
@@ -871,14 +865,14 @@
         /// </summary>
         /// <param name="name"></param>
         /// <param name="state"></param>
-        void SetState(string name, StateMachineState<TInstance> state)
+        void SetState(string name, StateMachineState state)
         {
             _stateCache[name] = state;
 
-            _eventCache[state.BeforeEnter.Name] = new StateMachineEvent<TInstance>(state.BeforeEnter, true);
-            _eventCache[state.Enter.Name] = new StateMachineEvent<TInstance>(state.Enter, true);
-            _eventCache[state.Leave.Name] = new StateMachineEvent<TInstance>(state.Leave, true);
-            _eventCache[state.AfterLeave.Name] = new StateMachineEvent<TInstance>(state.AfterLeave, true);
+            _eventCache[state.BeforeEnter.Name] = new StateMachineEvent(state.BeforeEnter, true);
+            _eventCache[state.Enter.Name] = new StateMachineEvent(state.Enter, true);
+            _eventCache[state.Leave.Name] = new StateMachineEvent(state.Leave, true);
+            _eventCache[state.AfterLeave.Name] = new StateMachineEvent(state.AfterLeave, true);
         }
 
         /// <summary>
@@ -960,23 +954,7 @@
             State<TInstance> activityState = GetState(state.Name);
 
             foreach (IActivityBinder<TInstance> activity in eventActivities)
-            {
                 activity.Bind(activityState);
-                if (!_compositeEvents.Contains(activity.Event.Name) || !_compositeBindings.ContainsKey(activity.Event.Name))
-                    continue;
-
-                foreach (KeyValuePair<string, List<EventActivityBinder<TInstance>>> compositeBinding in _compositeBindings[activity.Event.Name])
-                {
-                    IActivityBinder<TInstance>[] activitiesBinder = compositeBinding.Value.SelectMany(x => x.GetStateActivityBinders()).ToArray();
-
-                    if (!activitiesBinder.Any())
-                        continue;
-
-                    BindActivitiesToState(GetState(compositeBinding.Key), activitiesBinder);
-                }
-
-                _compositeBindings.Remove(activity.Event.Name);
-            }
         }
 
         /// <summary>
@@ -1283,7 +1261,7 @@
 
         Task UnhandledEvent(BehaviorContext<TInstance> context, State state)
         {
-            var unhandledEventContext = new UnhandledEventBehaviorContext<TInstance>(this, context, state);
+            var unhandledEventContext = new UnhandledEventBehaviorContext(this, context, state);
 
             return _unhandledEventCallback(unhandledEventContext);
         }
@@ -1300,11 +1278,11 @@
         /// <param name="configureRequest">Allow the request settings to be specified inline</param>
         protected void Request<TRequest, TResponse>(Expression<Func<Request<TInstance, TRequest, TResponse>>> propertyExpression,
             Expression<Func<TInstance, Guid?>> requestIdExpression,
-            Action<IRequestConfigurator> configureRequest = default)
+            Action<IRequestConfigurator<TInstance, TRequest, TResponse>> configureRequest = default)
             where TRequest : class
             where TResponse : class
         {
-            var configurator = new StateMachineRequestConfigurator<TRequest>();
+            var configurator = new StateMachineRequestConfigurator<TInstance, TRequest, TResponse>();
 
             configureRequest?.Invoke(configurator);
 
@@ -1322,11 +1300,11 @@
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="configureRequest">Allow the request settings to be specified inline</param>
         protected void Request<TRequest, TResponse>(Expression<Func<Request<TInstance, TRequest, TResponse>>> propertyExpression,
-            Action<IRequestConfigurator> configureRequest = default)
+            Action<IRequestConfigurator<TInstance, TRequest, TResponse>> configureRequest = default)
             where TRequest : class
             where TResponse : class
         {
-            var configurator = new StateMachineRequestConfigurator<TRequest>();
+            var configurator = new StateMachineRequestConfigurator<TInstance, TRequest, TResponse>();
 
             configureRequest?.Invoke(configurator);
 
@@ -1344,28 +1322,39 @@
         /// <param name="requestIdExpression">The property where the requestId is stored</param>
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
         protected void Request<TRequest, TResponse>(Expression<Func<Request<TInstance, TRequest, TResponse>>> propertyExpression,
-            Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings settings)
+            Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings<TInstance, TRequest, TResponse> settings)
             where TRequest : class
             where TResponse : class
         {
             var property = propertyExpression.GetPropertyInfo();
 
-            var request = new StateMachineRequest<TInstance, TRequest, TResponse>(property.Name, settings, requestIdExpression);
+            var request = new StateMachineRequest<TRequest, TResponse>(property.Name, settings, requestIdExpression);
 
             InitializeRequest(this, property, request);
 
-            Event(propertyExpression, x => x.Completed, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.Faulted, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.TimeoutExpired, x => x.CorrelateBy(requestIdExpression, context => context.Message.RequestId));
+            Event(propertyExpression, x => x.Completed, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Completed?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Faulted, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Faulted?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.TimeoutExpired, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.Message.RequestId);
+                settings.TimeoutExpired?.Invoke(x);
+            });
 
             State(propertyExpression, x => x.Pending);
 
             DuringAny(
                 When(request.Completed)
-                    .CancelRequestTimeout(request)
-                    .ClearRequest(request),
+                    .CancelRequestTimeout(request),
                 When(request.Faulted)
-                    .CancelRequestTimeout(request));
+                    .CancelRequestTimeout(request, false));
         }
 
         /// <summary>
@@ -1379,19 +1368,31 @@
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
         protected internal void Request<TRequest, TResponse>(Expression<Func<Request<TInstance, TRequest, TResponse>>> propertyExpression,
-            RequestSettings settings)
+            RequestSettings<TInstance, TRequest, TResponse> settings)
             where TRequest : class
             where TResponse : class
         {
             var property = propertyExpression.GetPropertyInfo();
 
-            var request = new StateMachineRequest<TInstance, TRequest, TResponse>(property.Name, settings);
+            var request = new StateMachineRequest<TRequest, TResponse>(property.Name, settings);
 
             InitializeRequest(this, property, request);
 
-            Event(propertyExpression, x => x.Completed, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.Faulted, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.TimeoutExpired, x => x.CorrelateById(context => context.Message.RequestId));
+            Event(propertyExpression, x => x.Completed, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Completed?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Faulted, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Faulted?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.TimeoutExpired, x =>
+            {
+                x.CorrelateById(context => context.Message.RequestId);
+                settings.TimeoutExpired?.Invoke(x);
+            });
 
             State(propertyExpression, x => x.Pending);
 
@@ -1399,7 +1400,7 @@
                 When(request.Completed)
                     .CancelRequestTimeout(request),
                 When(request.Faulted)
-                    .CancelRequestTimeout(request));
+                    .CancelRequestTimeout(request, false));
         }
 
         /// <summary>
@@ -1415,12 +1416,12 @@
         /// <param name="configureRequest">Allow the request settings to be specified inline</param>
         protected void Request<TRequest, TResponse, TResponse2>(Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
             Expression<Func<TInstance, Guid?>> requestIdExpression,
-            Action<IRequestConfigurator> configureRequest = default)
+            Action<IRequestConfigurator<TInstance, TRequest, TResponse, TResponse2>> configureRequest = default)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
         {
-            var configurator = new StateMachineRequestConfigurator<TRequest>();
+            var configurator = new StateMachineRequestConfigurator<TInstance, TRequest, TResponse, TResponse2>();
 
             configureRequest?.Invoke(configurator);
 
@@ -1439,12 +1440,12 @@
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="configureRequest">Allow the request settings to be specified inline</param>
         protected void Request<TRequest, TResponse, TResponse2>(Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
-            Action<IRequestConfigurator> configureRequest = default)
+            Action<IRequestConfigurator<TInstance, TRequest, TResponse, TResponse2>> configureRequest = default)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
         {
-            var configurator = new StateMachineRequestConfigurator<TRequest>();
+            var configurator = new StateMachineRequestConfigurator<TInstance, TRequest, TResponse, TResponse2>();
 
             configureRequest?.Invoke(configurator);
 
@@ -1462,34 +1463,49 @@
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="requestIdExpression">The property where the requestId is stored</param>
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
-        protected internal void Request<TRequest, TResponse, TResponse2>(Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
-            Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings settings)
+        protected internal void Request<TRequest, TResponse, TResponse2>(
+            Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
+            Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings<TInstance, TRequest, TResponse, TResponse2> settings)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
         {
             var property = propertyExpression.GetPropertyInfo();
 
-            var request = new StateMachineRequest<TInstance, TRequest, TResponse, TResponse2>(property.Name, settings, requestIdExpression);
+            var request = new StateMachineRequest<TRequest, TResponse, TResponse2>(property.Name, settings, requestIdExpression);
 
             InitializeRequest(this, property, request);
 
-            Event(propertyExpression, x => x.Completed, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.Completed2, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.Faulted, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.TimeoutExpired, x => x.CorrelateBy(requestIdExpression, context => context.Message.RequestId));
+            Event(propertyExpression, x => x.Completed, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Completed?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Completed2, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Completed2?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Faulted, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Faulted?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.TimeoutExpired, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.Message.RequestId);
+                settings.TimeoutExpired?.Invoke(x);
+            });
 
             State(propertyExpression, x => x.Pending);
 
             DuringAny(
                 When(request.Completed)
-                    .CancelRequestTimeout(request)
-                    .ClearRequest(request),
+                    .CancelRequestTimeout(request),
                 When(request.Completed2)
-                    .CancelRequestTimeout(request)
-                    .ClearRequest(request),
+                    .CancelRequestTimeout(request),
                 When(request.Faulted)
-                    .CancelRequestTimeout(request));
+                    .CancelRequestTimeout(request, false));
         }
 
         /// <summary>
@@ -1503,22 +1519,39 @@
         /// <typeparam name="TResponse2">The alternate response type</typeparam>
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
-        protected internal void Request<TRequest, TResponse, TResponse2>(Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
-            RequestSettings settings)
+        protected internal void Request<TRequest, TResponse, TResponse2>(
+            Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
+            RequestSettings<TInstance, TRequest, TResponse, TResponse2> settings)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
         {
             var property = propertyExpression.GetPropertyInfo();
 
-            var request = new StateMachineRequest<TInstance, TRequest, TResponse, TResponse2>(property.Name, settings);
+            var request = new StateMachineRequest<TRequest, TResponse, TResponse2>(property.Name, settings);
 
             InitializeRequest(this, property, request);
 
-            Event(propertyExpression, x => x.Completed, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.Completed2, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.Faulted, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.TimeoutExpired, x => x.CorrelateById(context => context.Message.RequestId));
+            Event(propertyExpression, x => x.Completed, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Completed?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Completed2, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Completed2?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Faulted, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Faulted?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.TimeoutExpired, x =>
+            {
+                x.CorrelateById(context => context.Message.RequestId);
+                settings.TimeoutExpired?.Invoke(x);
+            });
 
             State(propertyExpression, x => x.Pending);
 
@@ -1528,7 +1561,7 @@
                 When(request.Completed2)
                     .CancelRequestTimeout(request),
                 When(request.Faulted)
-                    .CancelRequestTimeout(request));
+                    .CancelRequestTimeout(request, false));
         }
 
         /// <summary>
@@ -1546,13 +1579,13 @@
         protected void Request<TRequest, TResponse, TResponse2, TResponse3>(
             Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2, TResponse3>>> propertyExpression,
             Expression<Func<TInstance, Guid?>> requestIdExpression,
-            Action<IRequestConfigurator> configureRequest = default)
+            Action<IRequestConfigurator<TInstance, TRequest, TResponse, TResponse2, TResponse3>> configureRequest = default)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
             where TResponse3 : class
         {
-            var configurator = new StateMachineRequestConfigurator<TRequest>();
+            var configurator = new StateMachineRequestConfigurator<TInstance, TRequest, TResponse, TResponse2, TResponse3>();
 
             configureRequest?.Invoke(configurator);
 
@@ -1573,13 +1606,13 @@
         /// <param name="configureRequest">Allow the request settings to be specified inline</param>
         protected void Request<TRequest, TResponse, TResponse2, TResponse3>(
             Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2, TResponse3>>> propertyExpression,
-            Action<IRequestConfigurator> configureRequest = default)
+            Action<IRequestConfigurator<TInstance, TRequest, TResponse, TResponse2, TResponse3>> configureRequest = default)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
             where TResponse3 : class
         {
-            var configurator = new StateMachineRequestConfigurator<TRequest>();
+            var configurator = new StateMachineRequestConfigurator<TInstance, TRequest, TResponse, TResponse2, TResponse3>();
 
             configureRequest?.Invoke(configurator);
 
@@ -1600,7 +1633,7 @@
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
         protected internal void Request<TRequest, TResponse, TResponse2, TResponse3>(
             Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2, TResponse3>>> propertyExpression,
-            Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings settings)
+            Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings<TInstance, TRequest, TResponse, TResponse2, TResponse3> settings)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
@@ -1608,30 +1641,47 @@
         {
             var property = propertyExpression.GetPropertyInfo();
 
-            var request = new StateMachineRequest<TInstance, TRequest, TResponse, TResponse2, TResponse3>(property.Name, settings, requestIdExpression);
+            var request = new StateMachineRequest<TRequest, TResponse, TResponse2, TResponse3>(property.Name, settings, requestIdExpression);
 
             InitializeRequest(this, property, request);
 
-            Event(propertyExpression, x => x.Completed, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.Completed2, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.Completed3, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.Faulted, x => x.CorrelateBy(requestIdExpression, context => context.RequestId));
-            Event(propertyExpression, x => x.TimeoutExpired, x => x.CorrelateBy(requestIdExpression, context => context.Message.RequestId));
+            Event(propertyExpression, x => x.Completed, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Completed?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Completed2, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Completed2?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Completed3, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Completed3?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Faulted, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.RequestId);
+                settings.Faulted?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.TimeoutExpired, x =>
+            {
+                x.CorrelateBy(requestIdExpression, context => context.Message.RequestId);
+                settings.TimeoutExpired?.Invoke(x);
+            });
 
             State(propertyExpression, x => x.Pending);
 
             DuringAny(
                 When(request.Completed)
-                    .CancelRequestTimeout(request)
-                    .ClearRequest(request),
+                    .CancelRequestTimeout(request),
                 When(request.Completed2)
-                    .CancelRequestTimeout(request)
-                    .ClearRequest(request),
+                    .CancelRequestTimeout(request),
                 When(request.Completed3)
-                    .CancelRequestTimeout(request)
-                    .ClearRequest(request),
+                    .CancelRequestTimeout(request),
                 When(request.Faulted)
-                    .CancelRequestTimeout(request));
+                    .CancelRequestTimeout(request, false));
         }
 
         /// <summary>
@@ -1648,7 +1698,7 @@
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
         protected internal void Request<TRequest, TResponse, TResponse2, TResponse3>(
             Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2, TResponse3>>> propertyExpression,
-            RequestSettings settings)
+            RequestSettings<TInstance, TRequest, TResponse, TResponse2, TResponse3> settings)
             where TRequest : class
             where TResponse : class
             where TResponse2 : class
@@ -1656,15 +1706,35 @@
         {
             var property = propertyExpression.GetPropertyInfo();
 
-            var request = new StateMachineRequest<TInstance, TRequest, TResponse, TResponse2, TResponse3>(property.Name, settings);
+            var request = new StateMachineRequest<TRequest, TResponse, TResponse2, TResponse3>(property.Name, settings);
 
             InitializeRequest(this, property, request);
 
-            Event(propertyExpression, x => x.Completed, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.Completed2, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.Completed3, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.Faulted, x => x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId")));
-            Event(propertyExpression, x => x.TimeoutExpired, x => x.CorrelateById(context => context.Message.RequestId));
+            Event(propertyExpression, x => x.Completed, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Completed?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Completed2, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Completed2?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Completed3, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Completed3?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.Faulted, x =>
+            {
+                x.CorrelateById(context => context.RequestId ?? throw new RequestException("Missing RequestId"));
+                settings.Faulted?.Invoke(x);
+            });
+            Event(propertyExpression, x => x.TimeoutExpired, x =>
+            {
+                x.CorrelateById(context => context.Message.RequestId);
+                settings.TimeoutExpired?.Invoke(x);
+            });
 
             State(propertyExpression, x => x.Pending);
 
@@ -1676,7 +1746,7 @@
                 When(request.Completed3)
                     .CancelRequestTimeout(request),
                 When(request.Faulted)
-                    .CancelRequestTimeout(request));
+                    .CancelRequestTimeout(request, false));
         }
 
         /// <summary>
@@ -1714,21 +1784,26 @@
 
             var name = property.Name;
 
-            var schedule = new StateMachineSchedule<TInstance, TMessage>(name, tokenIdExpression, settings);
+            var schedule = new StateMachineSchedule<TMessage>(name, tokenIdExpression, settings);
 
             InitializeSchedule(this, property, schedule);
 
             Event(propertyExpression, x => x.Received);
 
             if (settings.Received == null)
-                Event(propertyExpression, x => x.AnyReceived);
-            else
             {
+                Event(propertyExpression, x => x.AnyReceived);
+
+                var registration = GetEventRegistration(schedule.AnyReceived, typeof(TMessage));
+
+                registration.RegisterCorrelation(this);
+            }
+            else
                 Event(propertyExpression, x => x.AnyReceived, x =>
                 {
                     settings.Received(x);
                 });
-            }
+
 
             DuringAny(
                 When(schedule.AnyReceived)
@@ -1736,20 +1811,20 @@
                     {
                         Guid? tokenId = schedule.GetTokenId(context.Saga);
 
-                        if (context.TryGetPayload(out ConsumeContext consumeContext))
+                        Guid? messageTokenId = context.GetSchedulingTokenId();
+                        if (messageTokenId.HasValue)
                         {
-                            Guid? messageTokenId = consumeContext.GetSchedulingTokenId();
-                            if (messageTokenId.HasValue)
+                            if (!tokenId.HasValue || messageTokenId.Value != tokenId.Value)
                             {
-                                if (!tokenId.HasValue || messageTokenId.Value != tokenId.Value)
-                                {
-                                    LogContext.Debug?.Log("SAGA: {CorrelationId} Scheduled message not current: {TokenId}", context.Saga.CorrelationId,
-                                        messageTokenId.Value);
+                                LogContext.Debug?.Log("SAGA: {CorrelationId} Scheduled message not current: {TokenId}", context.Saga.CorrelationId,
+                                    messageTokenId.Value);
 
-                                    return;
-                                }
+                                return;
                             }
                         }
+
+                        if (!tokenId.HasValue)
+                            return;
 
                         BehaviorContext<TInstance, TMessage> eventContext = context.CreateProxy(schedule.Received, context.Message);
 
@@ -1765,25 +1840,25 @@
             return TaskUtil.False;
         }
 
-        static void InitializeSchedule<T>(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property, Schedule<TInstance, T> schedule)
+        void InitializeSchedule<T>(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property, Schedule<TInstance, T> schedule)
             where T : class
         {
             if (property.CanWrite)
                 property.SetValue(stateMachine, schedule);
-            else if (ConfigurationHelpers.TryGetBackingField(stateMachine.GetType().GetTypeInfo(), property, out var backingField))
+            else if (TryGetBackingField(property, out var backingField))
                 backingField.SetValue(stateMachine, schedule);
             else
                 throw new ArgumentException($"The schedule property is not writable: {property.Name}");
         }
 
-        static void InitializeRequest<TRequest, TResponse>(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property,
+        void InitializeRequest<TRequest, TResponse>(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property,
             Request<TInstance, TRequest, TResponse> request)
             where TRequest : class
             where TResponse : class
         {
             if (property.CanWrite)
                 property.SetValue(stateMachine, request);
-            else if (ConfigurationHelpers.TryGetBackingField(stateMachine.GetType().GetTypeInfo(), property, out var backingField))
+            else if (TryGetBackingField(property, out var backingField))
                 backingField.SetValue(stateMachine, request);
             else
                 throw new ArgumentException($"The request property is not writable: {property.Name}");
@@ -1796,36 +1871,43 @@
         {
             foreach (var declaration in _registrations.Value)
                 declaration.Declare(this);
-
-            var machineType = GetType().GetTypeInfo();
-
-            IEnumerable<PropertyInfo> properties = ConfigurationHelpers.GetStateMachineProperties(machineType);
-
-            foreach (var propertyInfo in properties)
-            {
-                var propertyType = propertyInfo.PropertyType.GetTypeInfo();
-                if (!propertyType.IsGenericType)
-                    continue;
-
-                if (!propertyType.ClosesType(typeof(Event<>), out Type[] arguments))
-                    continue;
-
-                var @event = (Event)propertyInfo.GetValue(this);
-                if (@event == null)
-                    continue;
-
-                var registration = GetEventRegistration(@event, arguments[0]);
-                registration.RegisterCorrelation(this);
-            }
         }
 
         static EventRegistration GetEventRegistration(Event @event, Type messageType)
         {
-            var registrationType = messageType.HasInterface<CorrelatedBy<Guid>>()
-                ? typeof(CorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType)
-                : typeof(UncorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType);
+            var isFault = messageType.ClosesType(typeof(Fault<>), out Type[] faultMessageType);
 
-            return (EventRegistration)Activator.CreateInstance(registrationType, @event);
+            Type registrationType;
+            if (messageType.HasInterface<CorrelatedBy<Guid>>())
+            {
+                registrationType = isFault
+                    ? typeof(CorrelatedFaultEventRegistration<>).MakeGenericType(typeof(TInstance), faultMessageType[0])
+                    : typeof(CorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType);
+            }
+            else
+            {
+                registrationType = isFault
+                    ? typeof(UncorrelatedFaultEventRegistration<>).MakeGenericType(typeof(TInstance), faultMessageType[0])
+                    : typeof(UncorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType);
+            }
+
+            // return (EventRegistration)Activator.CreateInstance(registrationType, @event);
+            return CreateRegistration(registrationType, @event, messageType);
+        }
+
+        static EventRegistration CreateRegistration(Type registrationType, Event @event, Type messageType)
+        {
+            var constructorInfo = registrationType.GetConstructors().FirstOrDefault(x => x.GetParameters().Length == 1);
+            if (constructorInfo == null)
+                throw new ArgumentException("The event correlation could not be created: " + TypeCache.GetShortName(registrationType));
+
+            var eventParameter = Expression.Parameter(typeof(Event), "event");
+            var convertExpression = Expression.Convert(eventParameter, typeof(Event<>).MakeGenericType(messageType));
+            var @new = Expression.New(constructorInfo, convertExpression);
+
+            Func<Event, EventRegistration> factoryMethod = Expression.Lambda<Func<Event, EventRegistration>>(@new, eventParameter).CompileFast();
+
+            return factoryMethod(@event);
         }
 
         StateMachine<TInstance> Modify(Action<IStateMachineModifier<TInstance>> modifier)
@@ -1849,212 +1931,216 @@
             return machine;
         }
 
-
-        protected static class ConfigurationHelpers
+        StateMachineRegistration[] GetRegistrations()
         {
-            public static StateMachineRegistration[] GetRegistrations(MassTransitStateMachine<TInstance> stateMachine)
+            var events = new List<StateMachineRegistration>();
+
+            var machineType = GetType();
+
+            IEnumerable<PropertyInfo> properties = GetStateMachineProperties();
+
+            foreach (var propertyInfo in properties)
             {
-                var events = new List<StateMachineRegistration>();
-
-                var machineType = stateMachine.GetType().GetTypeInfo();
-
-                IEnumerable<PropertyInfo> properties = GetStateMachineProperties(machineType);
-
-                foreach (var propertyInfo in properties)
+                if (propertyInfo.PropertyType.IsGenericType)
                 {
-                    if (propertyInfo.PropertyType.GetTypeInfo().IsGenericType)
+                    if (propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Event<>))
                     {
-                        if (propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Event<>))
-                        {
-                            var declarationType = typeof(DataEventRegistration<,>).MakeGenericType(typeof(TInstance), machineType,
-                                propertyInfo.PropertyType.GetGenericArguments().First());
-                            var declaration = Activator.CreateInstance(declarationType, propertyInfo);
-                            events.Add((StateMachineRegistration)declaration);
-                        }
-                    }
-                    else
-                    {
-                        if (propertyInfo.PropertyType == typeof(Event))
-                        {
-                            var declarationType = typeof(TriggerEventRegistration<>).MakeGenericType(typeof(TInstance), machineType);
-                            var declaration = Activator.CreateInstance(declarationType, propertyInfo);
-                            events.Add((StateMachineRegistration)declaration);
-                        }
-                        else if (propertyInfo.PropertyType == typeof(State))
-                        {
-                            var declarationType = typeof(StateRegistration<>).MakeGenericType(typeof(TInstance), machineType);
-                            var declaration = Activator.CreateInstance(declarationType, propertyInfo);
-                            events.Add((StateMachineRegistration)declaration);
-                        }
+                        var declarationType = typeof(DataEventRegistration<,>).MakeGenericType(typeof(TInstance), machineType,
+                            propertyInfo.PropertyType.GetGenericArguments().First());
+                        var declaration = Activator.CreateInstance(declarationType, propertyInfo);
+                        events.Add((StateMachineRegistration)declaration);
                     }
                 }
-
-                return events.ToArray();
-            }
-
-            public static IEnumerable<PropertyInfo> GetStateMachineProperties(TypeInfo typeInfo)
-            {
-                if (typeInfo.IsInterface)
-                    yield break;
-
-                if (typeInfo.BaseType != null)
-                {
-                    foreach (var propertyInfo in GetStateMachineProperties(typeInfo.BaseType.GetTypeInfo()))
-                        yield return propertyInfo;
-                }
-
-                IEnumerable<PropertyInfo> properties = typeInfo.DeclaredMethods
-                    .Where(x => x.IsSpecialName && x.Name.StartsWith("get_") && !x.IsStatic)
-                    .Select(x => typeInfo.GetDeclaredProperty(x.Name.Substring("get_".Length)))
-                    .Where(x => x.CanRead && (x.CanWrite || TryGetBackingField(typeInfo, x, out _)));
-
-                foreach (var propertyInfo in properties)
-                    yield return propertyInfo;
-            }
-
-            public static bool TryGetBackingField(TypeInfo typeInfo, PropertyInfo property, out FieldInfo backingField)
-            {
-                backingField = typeInfo
-                    .GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
-                    .FirstOrDefault(field =>
-                        field.Attributes.HasFlag(FieldAttributes.Private) &&
-                        field.Attributes.HasFlag(FieldAttributes.InitOnly) &&
-                        field.CustomAttributes.Any(attr => attr.AttributeType == typeof(CompilerGeneratedAttribute)) &&
-                        field.DeclaringType == property.DeclaringType &&
-                        field.FieldType.IsAssignableFrom(property.PropertyType) &&
-                        field.Name.StartsWith("<" + property.Name + ">")
-                    );
-
-                return backingField != null;
-            }
-
-            public static void InitializeState(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property,
-                StateMachineState<TInstance> state)
-            {
-                if (property.CanWrite)
-                    property.SetValue(stateMachine, state);
-                else if (TryGetBackingField(stateMachine.GetType().GetTypeInfo(), property, out var backingField))
-                    backingField.SetValue(stateMachine, state);
-                else
-                    throw new ArgumentException($"The state property is not writable: {property.Name}");
-            }
-
-            public static void InitializeStateProperty<TProperty>(PropertyInfo stateProperty, TProperty propertyValue,
-                StateMachineState<TInstance> state)
-                where TProperty : class
-            {
-                if (stateProperty.CanWrite)
-                    stateProperty.SetValue(propertyValue, state);
                 else
                 {
-                    var objectProperty = propertyValue.GetType().GetProperty(stateProperty.Name, typeof(State));
-                    if (objectProperty == null || !objectProperty.CanWrite)
-                        throw new ArgumentException($"The state property is not writable: {stateProperty.Name}");
-
-                    objectProperty.SetValue(propertyValue, state);
+                    if (propertyInfo.PropertyType == typeof(Event))
+                    {
+                        var declarationType = typeof(TriggerEventRegistration<>).MakeGenericType(typeof(TInstance), machineType);
+                        var declaration = Activator.CreateInstance(declarationType, propertyInfo);
+                        events.Add((StateMachineRegistration)declaration);
+                    }
+                    else if (propertyInfo.PropertyType == typeof(State))
+                    {
+                        var declarationType = typeof(StateRegistration<>).MakeGenericType(typeof(TInstance), machineType);
+                        var declaration = Activator.CreateInstance(declarationType, propertyInfo);
+                        events.Add((StateMachineRegistration)declaration);
+                    }
                 }
             }
 
-            public static void InitializeEvent(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property, Event @event)
+            return events.ToArray();
+        }
+
+        IEnumerable<PropertyInfo> GetStateMachineProperties()
+        {
+            return _stateMachineProperties ??= GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(x => x.CanRead && (x.CanWrite || TryGetBackingField(x, out _))).ToList();
+        }
+
+        bool TryGetBackingField(PropertyInfo property, out FieldInfo backingField)
+        {
+            _backingFields ??= GetBackingFields(GetType())
+                .Where(field =>
+                    field.Attributes.HasFlag(FieldAttributes.Private) &&
+                    field.Attributes.HasFlag(FieldAttributes.InitOnly) &&
+                    field.CustomAttributes.Any(attr => attr.AttributeType == typeof(CompilerGeneratedAttribute)) &&
+                    field.Name.StartsWith("<")
+                ).ToList();
+
+            backingField = _backingFields
+                .FirstOrDefault(field =>
+                    field.DeclaringType == property.DeclaringType &&
+                    field.FieldType.IsAssignableFrom(property.PropertyType) &&
+                    field.Name.StartsWith("<" + property.Name + ">")
+                );
+
+            return backingField != null;
+        }
+
+        static IEnumerable<FieldInfo> GetBackingFields(Type type)
+        {
+            while (true)
             {
-                if (property.CanWrite)
-                    property.SetValue(stateMachine, @event);
-                else if (TryGetBackingField(stateMachine.GetType().GetTypeInfo(), property, out var backingField))
-                    backingField.SetValue(stateMachine, @event);
-                else
-                    throw new ArgumentException($"The event property is not writable: {property.Name}");
+                foreach (var fieldInfo in type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+                    yield return fieldInfo;
+
+                if (type.BaseType == null)
+                    break;
+
+                if (type.BaseType.IsGenericType && type.BaseType.GetGenericTypeDefinition() == typeof(MassTransitStateMachine<>))
+                    break;
+
+                type = type.BaseType;
+            }
+        }
+
+        void InitializeState(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property, StateMachineState state)
+        {
+            if (property.CanWrite)
+                property.SetValue(stateMachine, state);
+            else if (TryGetBackingField(property, out var backingField))
+                backingField.SetValue(stateMachine, state);
+            else
+                throw new ArgumentException($"The state property is not writable: {property.Name}");
+        }
+
+        void InitializeStateProperty<TProperty>(PropertyInfo stateProperty, TProperty propertyValue, StateMachineState state)
+            where TProperty : class
+        {
+            if (stateProperty.CanWrite)
+                stateProperty.SetValue(propertyValue, state);
+            else
+            {
+                var objectProperty = propertyValue.GetType().GetProperty(stateProperty.Name, typeof(State));
+                if (objectProperty == null || !objectProperty.CanWrite)
+                    throw new ArgumentException($"The state property is not writable: {stateProperty.Name}");
+
+                objectProperty.SetValue(propertyValue, state);
+            }
+        }
+
+        void InitializeEvent(MassTransitStateMachine<TInstance> stateMachine, PropertyInfo property, Event @event)
+        {
+            if (property.CanWrite)
+                property.SetValue(stateMachine, @event);
+            else if (TryGetBackingField(property, out var backingField))
+                backingField.SetValue(stateMachine, @event);
+            else
+                throw new ArgumentException($"The event property is not writable: {property.Name}");
+        }
+
+        void InitializeEventProperty<TProperty, T>(PropertyInfo eventProperty, TProperty propertyValue, Event @event)
+            where TProperty : class
+            where T : class
+        {
+            if (eventProperty.CanWrite)
+                eventProperty.SetValue(propertyValue, @event);
+            else
+            {
+                var objectProperty = propertyValue.GetType().GetProperty(eventProperty.Name, typeof(Event<T>));
+                if (objectProperty == null || !objectProperty.CanWrite)
+                    throw new ArgumentException($"The event property is not writable: {eventProperty.Name}");
+
+                objectProperty.SetValue(propertyValue, @event);
+            }
+        }
+
+
+        interface StateMachineRegistration
+        {
+            void Declare(object stateMachine);
+        }
+
+
+        class StateRegistration<TStateMachine> :
+            StateMachineRegistration
+            where TStateMachine : MassTransitStateMachine<TInstance>
+        {
+            readonly PropertyInfo _propertyInfo;
+
+            public StateRegistration(PropertyInfo propertyInfo)
+            {
+                _propertyInfo = propertyInfo;
             }
 
-            public static void InitializeEventProperty<TProperty, T>(PropertyInfo eventProperty, TProperty propertyValue, Event @event)
-                where TProperty : class
-                where T : class
+            public void Declare(object stateMachine)
             {
-                if (eventProperty.CanWrite)
-                    eventProperty.SetValue(propertyValue, @event);
-                else
-                {
-                    var objectProperty = propertyValue.GetType().GetProperty(eventProperty.Name, typeof(Event<T>));
-                    if (objectProperty == null || !objectProperty.CanWrite)
-                        throw new ArgumentException($"The event property is not writable: {eventProperty.Name}");
+                var machine = (TStateMachine)stateMachine;
+                var existing = _propertyInfo.GetValue(machine);
+                if (existing != null)
+                    return;
 
-                    objectProperty.SetValue(propertyValue, @event);
-                }
+                machine.DeclareState(_propertyInfo);
+            }
+        }
+
+
+        class TriggerEventRegistration<TStateMachine> :
+            StateMachineRegistration
+            where TStateMachine : MassTransitStateMachine<TInstance>
+        {
+            readonly PropertyInfo _propertyInfo;
+
+            public TriggerEventRegistration(PropertyInfo propertyInfo)
+            {
+                _propertyInfo = propertyInfo;
             }
 
-
-            public interface StateMachineRegistration
+            public void Declare(object stateMachine)
             {
-                void Declare(object stateMachine);
+                var machine = (TStateMachine)stateMachine;
+                var existing = _propertyInfo.GetValue(machine);
+                if (existing != null)
+                    return;
+
+                machine.DeclarePropertyBasedEvent(prop => machine.DeclareTriggerEvent(prop.Name), _propertyInfo);
+            }
+        }
+
+
+        class DataEventRegistration<TStateMachine, TData> :
+            StateMachineRegistration
+            where TStateMachine : MassTransitStateMachine<TInstance>
+            where TData : class
+        {
+            readonly PropertyInfo _propertyInfo;
+
+            public DataEventRegistration(PropertyInfo propertyInfo)
+            {
+                _propertyInfo = propertyInfo;
             }
 
-
-            class StateRegistration<TStateMachine> :
-                StateMachineRegistration
-                where TStateMachine : MassTransitStateMachine<TInstance>
+            public void Declare(object stateMachine)
             {
-                readonly PropertyInfo _propertyInfo;
+                var machine = (TStateMachine)stateMachine;
+                var existing = _propertyInfo.GetValue(machine);
+                if (existing != null)
+                    return;
 
-                public StateRegistration(PropertyInfo propertyInfo)
-                {
-                    _propertyInfo = propertyInfo;
-                }
+                Event<TData> @event = machine.DeclarePropertyBasedEvent(prop => machine.DeclareDataEvent<TData>(prop.Name), _propertyInfo);
 
-                public void Declare(object stateMachine)
-                {
-                    var machine = (TStateMachine)stateMachine;
-                    var existing = _propertyInfo.GetValue(machine);
-                    if (existing != null)
-                        return;
-
-                    machine.DeclareState(_propertyInfo);
-                }
-            }
-
-
-            class TriggerEventRegistration<TStateMachine> :
-                StateMachineRegistration
-                where TStateMachine : MassTransitStateMachine<TInstance>
-            {
-                readonly PropertyInfo _propertyInfo;
-
-                public TriggerEventRegistration(PropertyInfo propertyInfo)
-                {
-                    _propertyInfo = propertyInfo;
-                }
-
-                public void Declare(object stateMachine)
-                {
-                    var machine = (TStateMachine)stateMachine;
-                    var existing = _propertyInfo.GetValue(machine);
-                    if (existing != null)
-                        return;
-
-                    machine.DeclarePropertyBasedEvent(prop => machine.DeclareTriggerEvent(prop.Name), _propertyInfo);
-                }
-            }
-
-
-            class DataEventRegistration<TStateMachine, TData> :
-                StateMachineRegistration
-                where TStateMachine : MassTransitStateMachine<TInstance>
-                where TData : class
-            {
-                readonly PropertyInfo _propertyInfo;
-
-                public DataEventRegistration(PropertyInfo propertyInfo)
-                {
-                    _propertyInfo = propertyInfo;
-                }
-
-                public void Declare(object stateMachine)
-                {
-                    var machine = (TStateMachine)stateMachine;
-                    var existing = _propertyInfo.GetValue(machine);
-                    if (existing != null)
-                        return;
-
-                    machine.DeclarePropertyBasedEvent(prop => machine.DeclareDataEvent<TData>(prop.Name), _propertyInfo);
-                }
+                var eventRegistration = GetEventRegistration(@event, typeof(TData));
+                eventRegistration.RegisterCorrelation(machine);
             }
         }
 
@@ -2072,8 +2158,27 @@
 
             public void RegisterCorrelation(MassTransitStateMachine<TInstance> machine)
             {
-                var builderType = typeof(CorrelatedByEventCorrelationBuilder<,>).MakeGenericType(typeof(TInstance), typeof(TData));
-                var builder = (IEventCorrelationBuilder)Activator.CreateInstance(builderType, machine, _event);
+                var builder = new CorrelatedByEventCorrelationBuilder<TInstance, TData>(machine, _event);
+
+                machine._eventCorrelations[_event] = builder.Build();
+            }
+        }
+
+
+        class CorrelatedFaultEventRegistration<TData> :
+            EventRegistration
+            where TData : class, CorrelatedBy<Guid>
+        {
+            readonly Event<Fault<TData>> _event;
+
+            public CorrelatedFaultEventRegistration(Event<Fault<TData>> @event)
+            {
+                _event = @event;
+            }
+
+            public void RegisterCorrelation(MassTransitStateMachine<TInstance> machine)
+            {
+                var builder = new CorrelatedByFaultEventCorrelationBuilder<TInstance, TData>(machine, _event);
 
                 machine._eventCorrelations[_event] = builder.Build();
             }
@@ -2096,18 +2201,40 @@
                 if (GlobalTopology.Send.GetMessageTopology<TData>().TryGetConvention(out ICorrelationIdMessageSendTopologyConvention<TData> convention)
                     && convention.TryGetMessageCorrelationId(out IMessageCorrelationId<TData> messageCorrelationId))
                 {
-                    var builderType = typeof(MessageCorrelationIdEventCorrelationBuilder<,>).MakeGenericType(typeof(TInstance), typeof(TData));
-                    var builder = (IEventCorrelationBuilder)Activator.CreateInstance(builderType, machine, _event, messageCorrelationId);
+                    var builder = new StateMachineInterfaceType<TInstance, TData>.MessageCorrelationIdEventCorrelationBuilder(machine, _event,
+                        messageCorrelationId);
 
                     machine._eventCorrelations[_event] = builder.Build();
                 }
                 else
-                {
-                    var correlationType = typeof(UncorrelatedEventCorrelation<,>).MakeGenericType(typeof(TInstance), typeof(TData));
-                    var correlation = (EventCorrelation<TInstance, TData>)Activator.CreateInstance(correlationType, _event);
+                    machine._eventCorrelations[_event] = new UncorrelatedEventCorrelation<TData>(_event);
+            }
+        }
 
-                    machine._eventCorrelations[_event] = correlation;
+
+        class UncorrelatedFaultEventRegistration<TData> :
+            EventRegistration
+            where TData : class
+        {
+            readonly Event<Fault<TData>> _event;
+
+            public UncorrelatedFaultEventRegistration(Event<Fault<TData>> @event)
+            {
+                _event = @event;
+            }
+
+            public void RegisterCorrelation(MassTransitStateMachine<TInstance> machine)
+            {
+                if (GlobalTopology.Send.GetMessageTopology<TData>().TryGetConvention(out ICorrelationIdMessageSendTopologyConvention<TData> convention)
+                    && convention.TryGetMessageCorrelationId(out IMessageCorrelationId<TData> messageCorrelationId))
+                {
+                    var builder = new StateMachineInterfaceType<TInstance, TData>.MessageCorrelationIdFaultEventCorrelationBuilder(machine, _event,
+                        messageCorrelationId);
+
+                    machine._eventCorrelations[_event] = builder.Build();
                 }
+                else
+                    machine._eventCorrelations[_event] = new UncorrelatedEventCorrelation<Fault<TData>>(_event);
             }
         }
 

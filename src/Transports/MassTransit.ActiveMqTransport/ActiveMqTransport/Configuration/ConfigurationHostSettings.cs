@@ -2,17 +2,43 @@ namespace MassTransit.ActiveMqTransport.Configuration
 {
     using System;
     using System.Collections.Generic;
+    using System.Globalization;
     using System.Linq;
     using Apache.NMS;
 
 
-    public class ConfigurationHostSettings :
+    public abstract class ConfigurationHostSettings :
         ActiveMqHostSettings
     {
+        // ActiveMQ Failover connection parameters https://activemq.apache.org/components/classic/documentation/failover-transport-reference
+        static readonly HashSet<string> _failoverArguments =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "backup",
+                "initialReconnectDelay",
+                "maxCacheSize",
+                "maxReconnectAttempts",
+                "maxReconnectDelay",
+                "randomize",
+                "reconnectDelayExponent",
+                "reconnectSupported",
+                "startupMaxReconnectAttempts",
+                "timeout",
+                "trackMessages",
+                "updateURIsSupported",
+                "updateURIsURL",
+                "useExponentialBackOff",
+                "warnAfterReconnectAttempts",
+                "ha",
+                "reconnectAttempts",
+                "priorityBackup",
+                "priorityURIs"
+            };
+
         readonly Lazy<Uri> _brokerAddress;
         readonly Lazy<Uri> _hostAddress;
 
-        public ConfigurationHostSettings(Uri address)
+        protected ConfigurationHostSettings(Uri address)
         {
             var hostAddress = new ActiveMqHostAddress(address);
 
@@ -31,11 +57,7 @@ namespace MassTransit.ActiveMqTransport.Configuration
                     Password = parts[1];
             }
 
-            TransportOptions = new Dictionary<string, string>
-            {
-                {"wireFormat.tightEncodingEnabled", "true"},
-                {"nms.AsyncSend", "true"}
-            };
+            TransportOptions = new Dictionary<string, string>();
 
             _hostAddress = new Lazy<Uri>(FormatHostAddress);
             _brokerAddress = new Lazy<Uri>(FormatBrokerAddress);
@@ -43,6 +65,16 @@ namespace MassTransit.ActiveMqTransport.Configuration
 
         public string[] FailoverHosts { get; set; }
         public Dictionary<string, string> TransportOptions { get; }
+
+        public abstract string HostScheme { get; }
+
+        public abstract string FailoverScheme { get; }
+
+        public abstract string Scheme { get; }
+
+        public abstract string NmsScheme { get; }
+
+        public abstract string FailoverConnectionSettingPrefix { get; }
 
         public string Host { get; }
         public int Port { get; set; }
@@ -56,45 +88,55 @@ namespace MassTransit.ActiveMqTransport.Configuration
         public IConnection CreateConnection()
         {
             var factory = new NMSConnectionFactory(BrokerAddress);
-
+            if (string.IsNullOrEmpty(Username) && string.IsNullOrEmpty(Password))
+                return factory.ConnectionFactory.CreateConnection();
             return factory.ConnectionFactory.CreateConnection(Username, Password);
         }
 
         Uri FormatHostAddress()
         {
-            return new ActiveMqHostAddress(Host, Port, "/");
+            return new ActiveMqHostAddress(NmsScheme, Host, Port, "/");
         }
 
         Uri FormatBrokerAddress()
         {
-            var scheme = UseSsl ? "ssl" : "tcp";
-            var queryPart = GetQueryString();
-
             // create broker URI: http://activemq.apache.org/nms/activemq-uri-configuration.html
             if (FailoverHosts?.Length > 0)
             {
+                //filter only parameters which are not failover parameters
+                var failoverServerPart = GetQueryString(kv => !IsFailoverArgument(kv.Key));
                 var failoverPart = string.Join(",", FailoverHosts
                     .Select(failoverHost => new UriBuilder
                         {
-                            Scheme = scheme,
-                            Host = failoverHost,
-                            Port = Port
+                            Scheme = HostScheme,
+                            Host = GetHostName(failoverHost),
+                            Port = GetPort(failoverHost, Port),
+                            Query = failoverServerPart
                         }.Uri.ToString()
                     ));
-
-                return new Uri($"activemq:failover:({failoverPart}){queryPart}");
+                //filter failover parameters only. Apache.NMS.ActiveMQ requires prefix "transport." for failover parameters
+                var failoverQueryPart = GetQueryString(kv => IsFailoverArgument(kv.Key), FailoverConnectionSettingPrefix);
+                return new Uri($"{FailoverScheme}:({failoverPart}){failoverQueryPart}");
             }
 
-            var uri = new Uri($"activemq:{scheme}://{Host}:{Port}{queryPart}");
+            var queryPart = GetQueryString(_ => true);
+            var uri = new Uri($"{Scheme}://{Host}:{Port}{queryPart}");
             return uri;
         }
 
-        string GetQueryString()
+        string GetQueryString(Func<KeyValuePair<string, string>, bool> predicate, string prefix = "")
         {
             if (TransportOptions.Count == 0)
                 return "";
 
-            var queryString = string.Join("&", TransportOptions.Select(pair => $"{pair.Key}={pair.Value}"));
+            var queryString = string.Join("&", TransportOptions.Where(predicate).Select(pair =>
+            {
+                if (pair.Key.StartsWith(prefix, StringComparison.InvariantCulture))
+                {
+                    return $"{pair.Key}={pair.Value}";
+                }
+                return $"{prefix}{pair.Key}={pair.Value}";
+            }));
 
             return $"?{queryString}";
         }
@@ -107,6 +149,37 @@ namespace MassTransit.ActiveMqTransport.Configuration
                 Host = Host,
                 Port = Port
             }.Uri.ToString();
+        }
+
+        static bool IsFailoverArgument(string key)
+        {
+            return key.StartsWith("nested.", StringComparison.OrdinalIgnoreCase) || _failoverArguments.Any(f => key.EndsWith(f, StringComparison.InvariantCulture));
+        }
+
+        int GetPort(string host, int defaultPort)
+        {
+            //Parse the port from the host if it is specified, otherwise return the default port
+            if (string.IsNullOrEmpty(host))
+            {
+                return defaultPort;
+            }
+            var hostPort = host.Split(':');
+            if (hostPort.Length > 1 && int.TryParse(hostPort[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int port))
+            {
+                return port;
+            }
+            return defaultPort;
+        }
+
+        string GetHostName(string failoverHost)
+        {
+            if (string.IsNullOrEmpty(failoverHost))
+            {
+                throw new ArgumentNullException(nameof(failoverHost));
+            }
+
+            var hostPort = failoverHost.Split(':');
+            return hostPort[0];
         }
     }
 }

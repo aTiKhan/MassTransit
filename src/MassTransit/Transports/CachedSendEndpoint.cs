@@ -7,28 +7,27 @@ namespace MassTransit.Transports
 
 
     public class CachedSendEndpoint<TKey> :
-        ISendEndpoint,
+        ITransportSendEndpoint,
         INotifyValueUsed,
         IAsyncDisposable
     {
-        readonly ISendEndpoint _endpoint;
+        readonly ITransportSendEndpoint _endpoint;
 
         public CachedSendEndpoint(TKey key, ISendEndpoint endpoint)
         {
             Key = key;
-            _endpoint = endpoint;
+            _endpoint = endpoint as ITransportSendEndpoint ?? throw new ArgumentException("Must be a transport endpoint", nameof(endpoint));
         }
 
         public TKey Key { get; }
 
-        async ValueTask IAsyncDisposable.DisposeAsync()
+        ValueTask IAsyncDisposable.DisposeAsync()
         {
-            switch (_endpoint)
+            return _endpoint switch
             {
-                case IAsyncDisposable disposable:
-                    await disposable.DisposeAsync().ConfigureAwait(false);
-                    break;
-            }
+                IAsyncDisposable disposable => disposable.DisposeAsync(),
+                _ => default
+            };
         }
 
         public event Action Used;
@@ -37,6 +36,12 @@ namespace MassTransit.Transports
         {
             Used?.Invoke();
             return _endpoint.ConnectSendObserver(observer);
+        }
+
+        public Task<SendContext<T>> CreateSendContext<T>(T message, IPipe<SendContext<T>> pipe, CancellationToken cancellationToken)
+            where T : class
+        {
+            return _endpoint.CreateSendContext(message, pipe, cancellationToken);
         }
 
         public Task Send<T>(T message, CancellationToken cancellationToken = new CancellationToken())

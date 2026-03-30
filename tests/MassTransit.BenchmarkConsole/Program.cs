@@ -1,23 +1,7 @@
-﻿namespace MassTransit.BenchmarkConsole
-{
-    using System;
-    using BenchmarkDotNet.Running;
+﻿using System.Reflection;
+using BenchmarkDotNet.Running;
 
-
-    class Program
-    {
-        static void Main(string[] args)
-        {
-            Console.WriteLine("MassTransit Benchmark");
-            Console.WriteLine();
-
-          //  BenchmarkRunner.Run<SendBenchmark>();
-
-            //          BenchmarkRunner.Run<SupervisorBenchmark>();
-
-          //  BenchmarkRunner.Run<JsonSerializationBenchmark>();
-
-            BenchmarkRunner.Run<MediatorBenchmark>();
-        }
-    }
-}
+var currentAssembly = Assembly.GetExecutingAssembly();
+BenchmarkSwitcher
+    .FromAssembly(currentAssembly)
+    .Run(args);

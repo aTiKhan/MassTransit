@@ -2,6 +2,7 @@ namespace MassTransit.RabbitMqTransport.Configuration
 {
     using System;
     using System.Collections.Generic;
+    using System.IO;
     using MassTransit.Configuration;
     using RabbitMQ.Client.Exceptions;
     using Topology;
@@ -38,7 +39,10 @@ namespace MassTransit.RabbitMqTransport.Configuration
             ReceiveTransportRetryPolicy = Retry.CreatePolicy(x =>
             {
                 x.Handle<ConnectionException>();
-                x.Handle<MessageNotConfirmedException>(exception => exception.Message.Contains("CONNECTION_FORCED"));
+                x.Handle<AlreadyClosedException>();
+                x.Handle<EndOfStreamException>();
+                x.Handle<OperationInterruptedException>(exception => exception.ChannelShouldBeClosed());
+                x.Handle<NotSupportedException>(exception => exception.Message.Contains("Pipelining of requests forbidden"));
 
                 x.Ignore<AuthenticationFailureException>();
 
@@ -72,6 +76,7 @@ namespace MassTransit.RabbitMqTransport.Configuration
         {
             if (definition.IsTemporary)
             {
+                configurator.QueueExpiration = TimeSpan.FromMinutes(1);
                 configurator.AutoDelete = true;
                 configurator.Durable = false;
             }
@@ -136,7 +141,7 @@ namespace MassTransit.RabbitMqTransport.Configuration
                     yield return this.Failure("BatchTimeout", "must be >= 0 and <= 1s");
 
                 if (_hostSettings.BatchSettings.MessageLimit <= 1 || _hostSettings.BatchSettings.MessageLimit > 100)
-                    yield return this.Failure("BatchMessageLimit", "must be >= 1 and <= 100");
+                    yield return this.Failure("BatchMessageLimit", "must be > 1 and <= 100");
 
                 if (_hostSettings.BatchSettings.SizeLimit < 1024 || _hostSettings.BatchSettings.MessageLimit > 256 * 1024)
                     yield return this.Failure("BatchSizeLimit", "must be >= 1K and <= 256K");

@@ -1,180 +1,221 @@
-﻿namespace MassTransit.AmazonSqsTransport.Configuration
+﻿namespace MassTransit.AmazonSqsTransport.Configuration;
+
+using System;
+using System.Collections.Generic;
+using MassTransit.Configuration;
+using MassTransit.Middleware;
+using Middleware;
+using Topology;
+using Transports;
+using Util;
+
+
+public class AmazonSqsReceiveEndpointConfiguration :
+    ReceiveEndpointConfiguration,
+    IAmazonSqsReceiveEndpointConfiguration,
+    IAmazonSqsReceiveEndpointConfigurator
 {
-    using System;
-    using System.Collections.Generic;
-    using MassTransit.Configuration;
-    using MassTransit.Middleware;
-    using Middleware;
-    using Topology;
-    using Transports;
-    using Util;
+    static readonly TimeSpan MaxAllowedVisibilityTimeout = TimeSpan.FromHours(12);
 
+    readonly IBuildPipeConfigurator<ClientContext> _clientConfigurator;
+    readonly IBuildPipeConfigurator<ConnectionContext> _connectionConfigurator;
+    readonly IAmazonSqsEndpointConfiguration _endpointConfiguration;
+    readonly IAmazonSqsHostConfiguration _hostConfiguration;
+    readonly Lazy<Uri> _inputAddress;
+    readonly QueueReceiveSettings _settings;
 
-    public class AmazonSqsReceiveEndpointConfiguration :
-        ReceiveEndpointConfiguration,
-        IAmazonSqsReceiveEndpointConfiguration,
-        IAmazonSqsReceiveEndpointConfigurator
+    public AmazonSqsReceiveEndpointConfiguration(IAmazonSqsHostConfiguration hostConfiguration, QueueReceiveSettings settings,
+        IAmazonSqsEndpointConfiguration endpointConfiguration)
+        : base(hostConfiguration, endpointConfiguration)
     {
-        readonly IBuildPipeConfigurator<ClientContext> _clientConfigurator;
-        readonly IBuildPipeConfigurator<ConnectionContext> _connectionConfigurator;
-        readonly IAmazonSqsEndpointConfiguration _endpointConfiguration;
-        readonly IAmazonSqsHostConfiguration _hostConfiguration;
-        readonly Lazy<Uri> _inputAddress;
-        readonly QueueReceiveSettings _settings;
+        _settings = settings;
 
-        public AmazonSqsReceiveEndpointConfiguration(IAmazonSqsHostConfiguration hostConfiguration, QueueReceiveSettings settings,
-            IAmazonSqsEndpointConfiguration endpointConfiguration)
-            : base(hostConfiguration, endpointConfiguration)
+        _hostConfiguration = hostConfiguration;
+        _endpointConfiguration = endpointConfiguration;
+
+        _connectionConfigurator = new PipeConfigurator<ConnectionContext>();
+        _clientConfigurator = new PipeConfigurator<ClientContext>();
+
+        _inputAddress = new Lazy<Uri>(FormatInputAddress);
+    }
+
+    public ReceiveSettings Settings => _settings;
+    public override Uri HostAddress => _hostConfiguration.HostAddress;
+    public override Uri InputAddress => _inputAddress.Value;
+
+    public override ReceiveEndpointContext? CreateReceiveEndpointContext()
+    {
+        return CreateSqsReceiveEndpointContext();
+    }
+
+    IAmazonSqsTopologyConfiguration IAmazonSqsEndpointConfiguration.Topology => _endpointConfiguration.Topology;
+
+    public void Build(IHost host)
+    {
+        var context = CreateSqsReceiveEndpointContext();
+
+        _clientConfigurator.UseFilter(new ConfigureAmazonSqsTopologyFilter<ReceiveSettings>(_settings, context.BrokerTopology, context));
+
+        if (_hostConfiguration.DeployTopologyOnly)
+            _clientConfigurator.UseFilter(new TransportReadyFilter<ClientContext>(context));
+        else
         {
-            _settings = settings;
-
-            _hostConfiguration = hostConfiguration;
-            _endpointConfiguration = endpointConfiguration;
-
-            _connectionConfigurator = new PipeConfigurator<ConnectionContext>();
-            _clientConfigurator = new PipeConfigurator<ClientContext>();
-
-            _inputAddress = new Lazy<Uri>(FormatInputAddress);
-        }
-
-        public ReceiveSettings Settings => _settings;
-        public override Uri HostAddress => _hostConfiguration.HostAddress;
-        public override Uri InputAddress => _inputAddress.Value;
-
-        public override ReceiveEndpointContext CreateReceiveEndpointContext()
-        {
-            return CreateSqsReceiveEndpointContext();
-        }
-
-        IAmazonSqsTopologyConfiguration IAmazonSqsEndpointConfiguration.Topology => _endpointConfiguration.Topology;
-
-        public void Build(IHost host)
-        {
-            var context = CreateSqsReceiveEndpointContext();
-
-            _clientConfigurator.UseFilter(new ConfigureAmazonSqsTopologyFilter<ReceiveSettings>(_settings, context.BrokerTopology));
-
-            if (_hostConfiguration.DeployTopologyOnly)
-                _clientConfigurator.UseFilter(new TransportReadyFilter<ClientContext>(context));
-            else
-            {
-                if (_settings.PurgeOnStartup)
-                    _clientConfigurator.UseFilter(new PurgeOnStartupFilter(_settings.EntityName));
-
-                _clientConfigurator.UseFilter(new AmazonSqsConsumerFilter(context));
-            }
-
-            IPipe<ClientContext> clientPipe = _clientConfigurator.Build();
-
-            var transport = new ReceiveTransport<ClientContext>(_hostConfiguration, context,
-                () => context.ClientContextSupervisor, clientPipe);
-
-            var receiveEndpoint = new ReceiveEndpoint(transport, context);
-
-            var queueName = _settings.EntityName ?? NewId.Next().ToString(FormatUtil.Formatter);
-
-            host.AddReceiveEndpoint(queueName, receiveEndpoint);
-
-            ReceiveEndpoint = receiveEndpoint;
-        }
-
-        public override IEnumerable<ValidationResult> Validate()
-        {
-            if (_settings.PrefetchCount <= 0)
-                yield return this.Failure("PrefetchCount", "must be >= 1");
-
-            var queueName = $"{_settings.EntityName}";
-
-            if (!AmazonSqsEntityNameValidator.Validator.IsValidEntityName(_settings.EntityName))
-                yield return this.Failure(queueName, "must be a valid queue name");
-
             if (_settings.PurgeOnStartup)
-                yield return this.Warning(queueName, "Existing messages in the queue will be purged on service start");
+                _clientConfigurator.UseFilter(new PurgeOnStartupFilter(_settings.EntityName));
 
-            foreach (var result in base.Validate())
-                yield return result.WithParentKey(queueName);
+            _clientConfigurator.UseFilter(new ReceiveEndpointDependencyFilter<ClientContext>(context));
+            _clientConfigurator.UseFilter(new AmazonSqsConsumerFilter(context));
         }
 
-        public bool Durable
+        IPipe<ClientContext> clientPipe = _clientConfigurator.Build();
+
+        var transport = new ReceiveTransport<ClientContext>(_hostConfiguration, context,
+            () => context.ClientContextSupervisor, clientPipe);
+
+        if (IsBusEndpoint && _hostConfiguration.DeployPublishTopology)
         {
-            set
-            {
-                _settings.Durable = value;
+            var publishTopology = _hostConfiguration.Topology.PublishTopology;
 
-                Changed("Durable");
-            }
+            var brokerTopology = publishTopology.GetPublishBrokerTopology();
+
+            transport.PreStartPipe = new ConfigureAmazonSqsTopologyFilter<IPublishTopology>(publishTopology, brokerTopology).ToPipe();
         }
 
-        public bool AutoDelete
+        var receiveEndpoint = new ReceiveEndpoint(transport, context);
+
+        var queueName = _settings.EntityName ?? NewId.Next().ToString(FormatUtil.Formatter);
+
+        host.AddReceiveEndpoint(queueName, receiveEndpoint);
+
+        ReceiveEndpoint = receiveEndpoint;
+    }
+
+    public override IEnumerable<ValidationResult> Validate()
+    {
+        if (_settings.PrefetchCount <= 0)
+            yield return this.Failure("PrefetchCount", "must be >= 1");
+
+        var queueName = $"{_settings.EntityName}";
+
+        if (!AmazonSqsEntityNameValidator.Validator.IsValidEntityName(_settings.EntityName))
+            yield return this.Failure(queueName, "must be a valid queue name");
+
+        if (_settings.PurgeOnStartup)
+            yield return this.Warning(queueName, "Existing messages in the queue will be purged on service start");
+
+        var visibilityTimeout = TimeSpan.FromSeconds(_settings.VisibilityTimeout);
+        if (_settings.MaxVisibilityTimeout < visibilityTimeout)
+            yield return this.Failure("MaxVisibilityTimeout", "Must be greater than or equal to VisibilityTimeout");
+        
+        if (_settings.MaxVisibilityTimeoutRenewal < 0)
+            yield return this.Failure("MaxVisibilityTimeoutRenewal", "must be >= 0 (values less than 60 will be set to 60)");
+
+        if (_settings.MaxVisibilityTimeoutRenewal > 43200)
+            yield return this.Failure("MaxVisibilityTimeoutRenewal", "must be <= 43200 seconds (12 hours per AWS SQS limits)");
+
+        foreach (var result in base.Validate())
+            yield return result.WithParentKey(queueName);
+    }
+
+    public bool Durable
+    {
+        set
         {
-            set
-            {
-                _settings.AutoDelete = value;
+            _settings.Durable = value;
 
-                Changed("AutoDelete");
-            }
+            Changed("Durable");
         }
+    }
 
-        public ushort WaitTimeSeconds
+    public bool AutoDelete
+    {
+        set
         {
-            set => _settings.WaitTimeSeconds = value;
+            _settings.AutoDelete = value;
+
+            Changed("AutoDelete");
         }
+    }
 
-        public bool PurgeOnStartup
-        {
-            set => _settings.PurgeOnStartup = value;
-        }
+    public int ConcurrentDeliveryLimit
+    {
+        set => _settings.ConcurrentDeliveryLimit = value;
+    }
 
-        public IDictionary<string, object> QueueAttributes => _settings.QueueAttributes;
-        public IDictionary<string, object> QueueSubscriptionAttributes => _settings.QueueSubscriptionAttributes;
-        public IDictionary<string, string> QueueTags => _settings.QueueTags;
+    public ushort WaitTimeSeconds
+    {
+        set => _settings.WaitTimeSeconds = value;
+    }
 
-        public void Subscribe(string topicName, Action<IAmazonSqsTopicSubscriptionConfigurator> configure = null)
-        {
-            if (topicName == null)
-                throw new ArgumentNullException(nameof(topicName));
+    public bool PurgeOnStartup
+    {
+        set => _settings.PurgeOnStartup = value;
+    }
 
-            _endpointConfiguration.Topology.Consume.Bind(topicName, configure);
-        }
+    public IDictionary<string, object> QueueAttributes => _settings.QueueAttributes;
+    public IDictionary<string, object> QueueSubscriptionAttributes => _settings.QueueSubscriptionAttributes;
+    public IDictionary<string, string> QueueTags => _settings.QueueTags;
 
-        public void Subscribe<T>(Action<IAmazonSqsTopicSubscriptionConfigurator> configure = null)
-            where T : class
-        {
-            _endpointConfiguration.Topology.Consume.GetMessageTopology<T>().Subscribe(configure);
-        }
+    public void Subscribe(string topicName, Action<IAmazonSqsTopicSubscriptionConfigurator>? configure = null)
+    {
+        if (topicName == null)
+            throw new ArgumentNullException(nameof(topicName));
 
-        public void ConfigureClient(Action<IPipeConfigurator<ClientContext>> configure)
-        {
-            configure?.Invoke(_clientConfigurator);
-        }
+        _endpointConfiguration.Topology.Consume.Bind(topicName, configure);
+    }
 
-        public void ConfigureConnection(Action<IPipeConfigurator<ConnectionContext>> configure)
-        {
-            configure?.Invoke(_connectionConfigurator);
-        }
+    public int RedeliverVisibilityTimeout
+    {
+        set => _settings.RedeliverVisibilityTimeout = value;
+    }
 
-        public void DisableMessageOrdering()
-        {
-            _settings.IsOrdered = false;
-        }
+    public TimeSpan MaxVisibilityTimeout
+    {
+        set => _settings.MaxVisibilityTimeout = value > MaxAllowedVisibilityTimeout ? MaxAllowedVisibilityTimeout : value;
+    }
 
-        SqsReceiveEndpointContext CreateSqsReceiveEndpointContext()
-        {
-            var builder = new AmazonSqsReceiveEndpointBuilder(_hostConfiguration, this);
+    public int MaxVisibilityTimeoutRenewal
+    {
+        set => _settings.MaxVisibilityTimeoutRenewal = value < 60 ? 60 : value;
+    }
 
-            ApplySpecifications(builder);
+    public void Subscribe<T>(Action<IAmazonSqsTopicSubscriptionConfigurator>? configure = null)
+        where T : class
+    {
+        _endpointConfiguration.Topology.Consume.GetMessageTopology<T>().Subscribe(configure);
+    }
 
-            return builder.CreateReceiveEndpointContext();
-        }
+    public void ConfigureClient(Action<IPipeConfigurator<ClientContext>>? configure)
+    {
+        configure?.Invoke(_clientConfigurator);
+    }
 
-        Uri FormatInputAddress()
-        {
-            return _settings.GetInputAddress(_hostConfiguration.HostAddress);
-        }
+    public void ConfigureConnection(Action<IPipeConfigurator<ConnectionContext>>? configure)
+    {
+        configure?.Invoke(_connectionConfigurator);
+    }
 
-        protected override bool IsAlreadyConfigured()
-        {
-            return _inputAddress.IsValueCreated || base.IsAlreadyConfigured();
-        }
+    public void DisableMessageOrdering()
+    {
+        _settings.IsOrdered = false;
+    }
+
+    SqsReceiveEndpointContext CreateSqsReceiveEndpointContext()
+    {
+        var builder = new AmazonSqsReceiveEndpointBuilder(_hostConfiguration, this);
+
+        ApplySpecifications(builder);
+
+        return builder.CreateReceiveEndpointContext();
+    }
+
+    Uri FormatInputAddress()
+    {
+        return _settings.GetInputAddress(_hostConfiguration.HostAddress);
+    }
+
+    protected override bool IsAlreadyConfigured()
+    {
+        return _inputAddress.IsValueCreated || base.IsAlreadyConfigured();
     }
 }

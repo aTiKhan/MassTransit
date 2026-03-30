@@ -11,7 +11,7 @@
     /// <typeparam name="TException"></typeparam>
     public class CatchFaultActivity<TSaga, TException> :
         IStateMachineActivity<TSaga>
-        where TSaga : class, ISaga
+        where TSaga : class, SagaStateMachineInstance
         where TException : Exception
     {
         readonly IBehavior<TSaga> _behavior;
@@ -68,7 +68,7 @@
             {
                 await _behavior.Faulted(exceptionContext).ConfigureAwait(false);
 
-                // if the compensate returns, we should go forward normally
+                // if the compensation returns, we should go forward normally
                 await next.Execute(context).ConfigureAwait(false);
             }
             else

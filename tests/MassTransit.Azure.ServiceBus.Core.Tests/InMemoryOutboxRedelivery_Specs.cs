@@ -2,7 +2,6 @@
 {
     using System;
     using System.Threading.Tasks;
-    using Core;
     using NUnit.Framework;
 
 
@@ -182,7 +181,7 @@
         protected override void ConfigureServiceBusReceiveEndpoint(IServiceBusReceiveEndpointConfigurator configurator)
         {
             configurator.UseDelayedRedelivery(r => r.Interval(1, TimeSpan.FromMilliseconds(100)));
-            configurator.UseRetry(r => r.Interval(1, TimeSpan.FromMilliseconds(100)));
+            configurator.UseMessageRetry(r => r.Interval(1, TimeSpan.FromMilliseconds(100)));
             configurator.UseInMemoryOutbox();
 
             configurator.Consumer<TestHandler>();

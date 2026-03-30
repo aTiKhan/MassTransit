@@ -8,7 +8,6 @@ namespace MassTransit
     using Courier.Contracts;
     using Futures;
     using Futures.Contracts;
-    using Serialization;
 
 
     /// <summary>
@@ -413,6 +412,18 @@ namespace MassTransit
         /// <param name="configure"></param>
         protected void WhenAnyFaulted(Action<IFutureFaultConfigurator<TFault>> configure)
         {
+            var configurator = new FutureFaultConfigurator<TFault>(_fault);
+
+            configure?.Invoke(configurator);
+        }
+
+        /// <summary>
+        /// When all requests have either completed or faulted, Set the future Faulted
+        /// </summary>
+        /// <param name="configure"></param>
+        protected void WhenAllCompletedOrFaulted(Action<IFutureFaultConfigurator<TFault>> configure)
+        {
+            _fault.WaitForPending = true;
             var configurator = new FutureFaultConfigurator<TFault>(_fault);
 
             configure?.Invoke(configurator);

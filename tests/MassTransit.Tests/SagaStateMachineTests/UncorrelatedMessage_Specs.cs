@@ -2,7 +2,6 @@ namespace MassTransit.Tests.SagaStateMachineTests
 {
     using System;
     using System.Threading.Tasks;
-    using MassTransit.Saga;
     using NUnit.Framework;
     using TestFramework;
 
@@ -21,7 +20,7 @@ namespace MassTransit.Tests.SagaStateMachineTests
 
             Response<Status> status = await statusTask;
 
-            Assert.AreEqual("A", status.Message.ServiceName);
+            Assert.That(status.Message.ServiceName, Is.EqualTo("A"));
         }
 
         [Test]
@@ -32,7 +31,7 @@ namespace MassTransit.Tests.SagaStateMachineTests
 
             Response<Status> status = await Bus.Request<CheckStatus, Status>(InputQueueAddress, new CheckStatus("A"), TestCancellationToken);
 
-            Assert.AreEqual("A", status.Message.ServiceName);
+            Assert.That(status.Message.ServiceName, Is.EqualTo("A"));
         }
 
         [Test]
@@ -43,7 +42,7 @@ namespace MassTransit.Tests.SagaStateMachineTests
 
             Response<Status> status = await Bus.Request<CheckStatus, Status>(InputQueueAddress, new CheckStatus("B"), TestCancellationToken);
 
-            Assert.AreEqual("B", status.Message.ServiceName);
+            Assert.That(status.Message.ServiceName, Is.EqualTo("B"));
         }
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)

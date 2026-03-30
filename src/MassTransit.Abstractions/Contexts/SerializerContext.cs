@@ -1,8 +1,8 @@
-#nullable enable
 namespace MassTransit
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using Serialization;
 
 
@@ -15,10 +15,12 @@ namespace MassTransit
         bool IsSupportedMessageType<T>()
             where T : class;
 
+        bool IsSupportedMessageType(Type messageType);
+
         bool TryGetMessage<T>(out T? message)
             where T : class;
 
-        bool TryGetMessage(Type messageType, out object? message);
+        bool TryGetMessage(Type messageType, [NotNullWhen(true)] out object? message);
 
         /// <summary>
         /// Returns a message serializer using the deserialized message ContentType, that can be used to
@@ -46,6 +48,13 @@ namespace MassTransit
         /// <returns></returns>
         IMessageSerializer GetMessageSerializer(object message, string[] messageTypes);
 
+        /// <summary>
+        /// Converts a message (or really any object) to a dictionary of string, object. This is serializer dependent, since
+        /// JSON serializers use internal objects for object properties, to encapsulate nested properties, etc.
+        /// </summary>
+        /// <param name="message">The message</param>
+        /// <typeparam name="T">The message type</typeparam>
+        /// <returns></returns>
         Dictionary<string, object> ToDictionary<T>(T? message)
             where T : class;
     }

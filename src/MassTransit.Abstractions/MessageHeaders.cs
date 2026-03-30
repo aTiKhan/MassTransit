@@ -16,6 +16,11 @@ namespace MassTransit
         public const string FaultExceptionType = "MT-Fault-ExceptionType";
 
         /// <summary>
+        /// The input address of the endpoint on which the fault occurred
+        /// </summary>
+        public const string FaultInputAddress = "MT-Fault-InputAddress";
+
+        /// <summary>
         /// The exception message from a Fault
         /// </summary>
         public const string FaultMessage = "MT-Fault-Message";
@@ -136,6 +141,11 @@ namespace MassTransit
         public const string TransportMessageId = "TransportMessageId";
 
         /// <summary>
+        /// The Transport sent time (not supported by all, but hopefully enough)
+        /// </summary>
+        public const string TransportSentTime = "TransportSentTime";
+
+        /// <summary>
         /// When the message is redelivered or scheduled, and a new MessageId was generated, the original messageId
         /// </summary>
         public const string OriginalMessageId = "MT-OriginalMessageId";
@@ -168,6 +178,11 @@ namespace MassTransit
         public static class Request
         {
             public const string Accept = "MT-Request-AcceptType";
+
+            /// <summary>
+            /// Tracks routing slip retries when using the RoutingSlipRequestProxy
+            /// </summary>
+            public const string RoutingSlipRetryCount = "MT-RoutingSlip-RetryCount";
         }
 
 
@@ -192,6 +207,16 @@ namespace MassTransit
             /// When the previous message was sent
             /// </summary>
             public const string PreviousSent = "MT-Quartz-PreviousSent";
+
+            /// <summary>
+            /// Schedule identifier
+            /// </summary>
+            public const string ScheduleId = "MT-Quartz-ScheduleId";
+
+            /// <summary>
+            /// Schedule group
+            /// </summary>
+            public const string ScheduleGroup = "MT-Quartz-ScheduleGroup";
         }
     }
 }

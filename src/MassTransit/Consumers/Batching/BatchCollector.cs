@@ -1,7 +1,7 @@
 namespace MassTransit.Batching
 {
-    using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Threading.Tasks;
     using Util;
 
@@ -10,32 +10,31 @@ namespace MassTransit.Batching
         IBatchCollector<TMessage>
         where TMessage : class
     {
-        readonly ChannelExecutor _collector;
+        readonly TaskExecutor _collector;
         readonly IPipe<ConsumeContext<Batch<TMessage>>> _consumerPipe;
-        readonly ChannelExecutor _dispatcher;
-        readonly int _messageLimit;
-        readonly TimeSpan _timeLimit;
+        readonly TaskExecutor _dispatcher;
+        readonly BatchOptions _options;
         BatchConsumer<TMessage> _currentConsumer;
 
-        public BatchCollector(int messageLimit, TimeSpan timeLimit, int concurrencyLimit,
-            IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe)
+        public BatchCollector(BatchOptions options, IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe)
         {
-            _messageLimit = messageLimit;
-            _timeLimit = timeLimit;
+            _options = options;
             _consumerPipe = consumerPipe;
 
-            _collector = new ChannelExecutor(1);
-            _dispatcher = new ChannelExecutor(concurrencyLimit);
+            _collector = new TaskExecutor();
+            _dispatcher = new TaskExecutor(options.ConcurrencyLimit);
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            await _collector.DisposeAsync().ConfigureAwait(false);
+            return _collector.DisposeAsync();
         }
 
         public Task<BatchConsumer<TMessage>> Collect(ConsumeContext<TMessage> context)
         {
-            return _collector.Run(() => Add(context), context.CancellationToken);
+            var currentActivity = Activity.Current;
+
+            return _collector.Run(() => Add(context, currentActivity), context.CancellationToken);
         }
 
         public Task Complete(ConsumeContext<TMessage> context, BatchConsumer<TMessage> consumer)
@@ -58,7 +57,7 @@ namespace MassTransit.Batching
             return Task.CompletedTask;
         }
 
-        async Task<BatchConsumer<TMessage>> Add(ConsumeContext<TMessage> context)
+        async Task<BatchConsumer<TMessage>> Add(ConsumeContext<TMessage> context, Activity currentActivity)
         {
             if (_currentConsumer != null)
             {
@@ -67,9 +66,9 @@ namespace MassTransit.Batching
             }
 
             if (_currentConsumer == null || _currentConsumer.IsCompleted)
-                _currentConsumer = new BatchConsumer<TMessage>(_messageLimit, _timeLimit, _collector, _dispatcher, _consumerPipe);
+                _currentConsumer = new BatchConsumer<TMessage>(_options, _collector, _dispatcher, _consumerPipe);
 
-            await _currentConsumer.Add(context).ConfigureAwait(false);
+            await _currentConsumer.Add(context, currentActivity).ConfigureAwait(false);
 
             return _currentConsumer;
         }
@@ -80,36 +79,35 @@ namespace MassTransit.Batching
         IBatchCollector<TMessage>
         where TMessage : class
     {
-        readonly ChannelExecutor _collector;
+        readonly TaskExecutor _collector;
         readonly IDictionary<TKey, BatchConsumer<TMessage>> _collectors;
         readonly IPipe<ConsumeContext<Batch<TMessage>>> _consumerPipe;
-        readonly ChannelExecutor _dispatcher;
+        readonly TaskExecutor _dispatcher;
         readonly IGroupKeyProvider<TMessage, TKey> _keyProvider;
-        readonly int _messageLimit;
-        readonly TimeSpan _timeLimit;
+        readonly BatchOptions _options;
         BatchConsumer<TMessage> _currentConsumer;
 
-        public BatchCollector(int messageLimit, TimeSpan timeLimit, int concurrencyLimit,
-            IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe, IGroupKeyProvider<TMessage, TKey> keyProvider)
+        public BatchCollector(BatchOptions options, IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe, IGroupKeyProvider<TMessage, TKey> keyProvider)
         {
-            _messageLimit = messageLimit;
-            _timeLimit = timeLimit;
+            _options = options;
             _consumerPipe = consumerPipe;
             _keyProvider = keyProvider;
 
-            _collector = new ChannelExecutor(1);
-            _dispatcher = new ChannelExecutor(concurrencyLimit);
+            _collector = new TaskExecutor();
+            _dispatcher = new TaskExecutor(options.ConcurrencyLimit);
             _collectors = new Dictionary<TKey, BatchConsumer<TMessage>>();
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            await _collector.DisposeAsync().ConfigureAwait(false);
+            return _collector.DisposeAsync();
         }
 
         public Task<BatchConsumer<TMessage>> Collect(ConsumeContext<TMessage> context)
         {
-            return _collector.Run(() => Add(context), context.CancellationToken);
+            var currentActivity = Activity.Current;
+
+            return _collector.Run(() => Add(context, currentActivity), context.CancellationToken);
         }
 
         public Task Complete(ConsumeContext<TMessage> context, BatchConsumer<TMessage> consumer)
@@ -137,7 +135,7 @@ namespace MassTransit.Batching
             return Task.CompletedTask;
         }
 
-        async Task<BatchConsumer<TMessage>> Add(ConsumeContext<TMessage> context)
+        async Task<BatchConsumer<TMessage>> Add(ConsumeContext<TMessage> context, Activity currentActivity)
         {
             if (_keyProvider.TryGetKey(context, out var key))
             {
@@ -149,11 +147,11 @@ namespace MassTransit.Batching
 
                 if (consumer == null || consumer.IsCompleted)
                 {
-                    consumer = new BatchConsumer<TMessage>(_messageLimit, _timeLimit, _collector, _dispatcher, _consumerPipe);
+                    consumer = new BatchConsumer<TMessage>(_options, _collector, _dispatcher, _consumerPipe);
                     _collectors[key] = consumer;
                 }
 
-                await consumer.Add(context).ConfigureAwait(false);
+                await consumer.Add(context, currentActivity).ConfigureAwait(false);
 
                 return consumer;
             }
@@ -165,9 +163,9 @@ namespace MassTransit.Batching
             }
 
             if (_currentConsumer == null || _currentConsumer.IsCompleted)
-                _currentConsumer = new BatchConsumer<TMessage>(_messageLimit, _timeLimit, _collector, _dispatcher, _consumerPipe);
+                _currentConsumer = new BatchConsumer<TMessage>(_options, _collector, _dispatcher, _consumerPipe);
 
-            await _currentConsumer.Add(context).ConfigureAwait(false);
+            await _currentConsumer.Add(context, currentActivity).ConfigureAwait(false);
 
             return _currentConsumer;
         }

@@ -1,57 +1,51 @@
-﻿namespace MassTransit.EventHubIntegration
+﻿namespace MassTransit.EventHubIntegration;
+
+using System;
+using System.Collections.Generic;
+using System.Net.Mime;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Processor;
+using Transports;
+
+
+public sealed class EventHubReceiveContext :
+    BaseReceiveContext,
+    EventHubConsumeContext
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Threading.Tasks;
-    using Azure.Messaging.EventHubs;
-    using Azure.Messaging.EventHubs.Processor;
-    using Transports;
+    readonly ProcessEventArgs _eventArgs;
+    readonly EventData _eventData;
 
-
-    public sealed class EventHubReceiveContext :
-        BaseReceiveContext,
-        EventHubConsumeContext,
-        ReceiveLockContext
+    public EventHubReceiveContext(ProcessEventArgs eventArgs, ReceiveEndpointContext receiveEndpointContext)
+        : base(false, receiveEndpointContext)
     {
-        readonly ProcessEventArgs _eventArgs;
-        readonly EventData _eventData;
-        readonly IProcessorLockContext _lockContext;
+        _eventArgs = eventArgs;
+        _eventData = eventArgs.Data;
 
-        public EventHubReceiveContext(ProcessEventArgs eventArgs, ReceiveEndpointContext receiveEndpointContext, IProcessorLockContext lockContext)
-            : base(false, receiveEndpointContext)
-        {
-            _eventArgs = eventArgs;
-            _eventData = eventArgs.Data;
-            _lockContext = lockContext;
+        Body = new BytesMessageBody(eventArgs.Data.Body.ToArray());
+    }
 
-            Body = new BytesMessageBody(eventArgs.Data.Body.ToArray());
-        }
+    protected override IHeaderProvider HeaderProvider => new EventHubHeaderProvider(_eventData);
 
-        protected override IHeaderProvider HeaderProvider => new DictionaryHeaderProvider(_eventData.Properties);
+    public override MessageBody Body { get; }
 
-        public override MessageBody Body { get; }
+    public DateTimeOffset EnqueuedTime => _eventData.EnqueuedTime;
 
-        public DateTimeOffset EnqueuedTime => _eventData.EnqueuedTime;
-        public long Offset => _eventData.Offset;
-        public string PartitionId => _eventArgs.Partition.PartitionId;
-        public string PartitionKey => _eventData.PartitionKey;
-        public IDictionary<string, object> Properties => _eventData.Properties;
-        public long SequenceNumber => _eventData.SequenceNumber;
-        public IReadOnlyDictionary<string, object> SystemProperties => _eventData.SystemProperties;
+    [Obsolete("The Event Hubs service does not guarantee a numeric offset for all resource configurations.  Please use 'OffsetString' instead.")]
+    public long Offset => _eventData.Offset;
 
-        public Task Complete()
-        {
-            return _lockContext.Complete(_eventArgs);
-        }
+    public string OffsetString => _eventData.OffsetString;
+    public string PartitionId => _eventArgs.Partition.PartitionId;
+    public string PartitionKey => _eventData.PartitionKey;
+    public IDictionary<string, object> Properties => _eventData.Properties;
+    public long SequenceNumber => _eventData.SequenceNumber;
+    public IReadOnlyDictionary<string, object> SystemProperties => _eventData.SystemProperties;
 
-        public Task Faulted(Exception exception)
-        {
-            return _lockContext.Faulted(_eventArgs, exception);
-        }
+    protected override ContentType GetContentType()
+    {
+        ContentType contentType = default;
+        if (!string.IsNullOrWhiteSpace(_eventData.ContentType))
+            contentType = ConvertToContentType(_eventData.ContentType);
 
-        public Task ValidateLockStatus()
-        {
-            return Task.CompletedTask;
-        }
+        return contentType ?? base.GetContentType();
     }
 }

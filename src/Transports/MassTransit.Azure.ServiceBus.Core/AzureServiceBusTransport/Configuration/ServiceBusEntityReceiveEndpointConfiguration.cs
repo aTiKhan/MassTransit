@@ -80,6 +80,16 @@
             set => _configurator.RequiresSession = value;
         }
 
+        public int MaxConcurrentSessions
+        {
+            set => _configurator.MaxConcurrentSessions = value;
+        }
+
+        public int MaxConcurrentCallsPerSession
+        {
+            set => _configurator.MaxConcurrentCallsPerSession = value;
+        }
+
         public string UserMetadata
         {
             set => _configurator.UserMetadata = value;
@@ -90,7 +100,7 @@
             set => _settings.SessionIdleTimeout = value;
         }
 
-        public TimeSpan SessionIdleTimeout
+        public TimeSpan? SessionIdleTimeout
         {
             set => _settings.SessionIdleTimeout = value;
         }
@@ -98,11 +108,6 @@
         public TimeSpan MaxAutoRenewDuration
         {
             set => _settings.MaxAutoRenewDuration = value;
-        }
-
-        public virtual void SelectBasicTier()
-        {
-            _settings.SelectBasicTier();
         }
 
         public override IEnumerable<ValidationResult> Validate()
@@ -127,17 +132,25 @@
                 ClientPipeConfigurator.UseFilter(new TransportReadyFilter<ClientContext>(receiveEndpointContext));
             else
             {
-                var messageReceiver = new ServiceBusMessageReceiver(receiveEndpointContext);
-
+                ClientPipeConfigurator.UseFilter(new ReceiveEndpointDependencyFilter<ClientContext>(receiveEndpointContext));
                 ClientPipeConfigurator.UseFilter(_settings.RequiresSession
-                    ? new MessageSessionReceiverFilter(messageReceiver, receiveEndpointContext)
-                    : new MessageReceiverFilter(messageReceiver, receiveEndpointContext));
+                    ? new MessageSessionReceiverFilter(receiveEndpointContext)
+                    : new MessageReceiverFilter(receiveEndpointContext));
             }
 
             IPipe<ClientContext> clientPipe = ClientPipeConfigurator.Build();
 
             var transport = new ReceiveTransport<ClientContext>(_hostConfiguration, receiveEndpointContext, () => receiveEndpointContext
                 .ClientContextSupervisor, clientPipe);
+
+            if (IsBusEndpoint && _hostConfiguration.DeployPublishTopology)
+            {
+                var publishTopology = _hostConfiguration.Topology.PublishTopology;
+
+                var brokerTopology = publishTopology.GetPublishBrokerTopology();
+
+                transport.PreStartPipe = new ConfigureServiceBusTopologyFilter<IPublishTopology>(publishTopology, brokerTopology).ToPipe<ClientContext>();
+            }
 
             var receiveEndpoint = new ReceiveEndpoint(transport, receiveEndpointContext);
 

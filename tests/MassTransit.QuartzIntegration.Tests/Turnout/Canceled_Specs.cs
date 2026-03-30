@@ -3,7 +3,6 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
     using System;
     using System.Threading.Tasks;
     using Contracts.JobService;
-    using JobService;
     using NUnit.Framework;
 
 
@@ -21,19 +20,14 @@ namespace MassTransit.QuartzIntegration.Tests.Turnout
             Response<JobSubmissionAccepted> response = await requestClient.GetResponse<JobSubmissionAccepted>(new
             {
                 JobId = _jobId,
-                Job = new {Duration = TimeSpan.FromSeconds(30)}
+                Job = new { Duration = TimeSpan.FromSeconds(30) }
             });
 
             Assert.That(response.Message.JobId, Is.EqualTo(_jobId));
 
             ConsumeContext<JobStarted> started = await _started;
 
-            await Bus.Publish<CancelJob>(new
-            {
-                JobId = _jobId,
-                Reason = "I give up",
-                InVar.Timestamp
-            });
+            await Bus.CancelJob(_jobId, "I give up");
 
             // just to capture all the test output in a single window
             ConsumeContext<JobCanceled> cancelled = await _cancelled;

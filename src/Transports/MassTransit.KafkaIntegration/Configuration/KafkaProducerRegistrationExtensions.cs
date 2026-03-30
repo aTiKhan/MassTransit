@@ -2,7 +2,6 @@ namespace MassTransit
 {
     using System;
     using Confluent.Kafka;
-    using DependencyInjection;
     using KafkaIntegration;
     using KafkaIntegration.Configuration;
     using Microsoft.Extensions.DependencyInjection;
@@ -59,9 +58,9 @@ namespace MassTransit
             if (string.IsNullOrWhiteSpace(topicName))
                 throw new ArgumentException(nameof(topicName));
 
-            var registration = new KafkaProducerRegistrationConfigurator<TKey, T>(topicName, configure);
-            configurator.TryAddScoped(provider => GetProducer<TKey, T>(topicName, provider));
-            configurator.AddRegistration(registration);
+            var registration = new KafkaProducerRegistration<TKey, T>(topicName, configure);
+            configurator.TryAddScoped<IKafkaRider, ITopicProducer<TKey, T>>((rider, provider) => GetProducer<TKey, T>(topicName, rider, provider));
+            configurator.Registrar.GetOrAddRegistration<IKafkaProducerRegistration>(typeof(IKafkaProducerRegistration), _ => registration);
         }
 
         /// <summary>
@@ -84,9 +83,9 @@ namespace MassTransit
             if (producerConfig == null)
                 throw new ArgumentNullException(nameof(producerConfig));
 
-            var registration = new KafkaProducerRegistrationConfigurator<TKey, T>(topicName, configure, producerConfig);
-            configurator.TryAddScoped(provider => GetProducer<TKey, T>(topicName, provider));
-            configurator.AddRegistration(registration);
+            var registration = new KafkaProducerRegistration<TKey, T>(topicName, configure, producerConfig);
+            configurator.TryAddScoped<IKafkaRider, ITopicProducer<TKey, T>>((rider, provider) => GetProducer<TKey, T>(topicName, rider, provider));
+            configurator.Registrar.GetOrAddRegistration<IKafkaProducerRegistration>(typeof(IKafkaProducerRegistration), _ => registration);
         }
 
         /// <summary>
@@ -130,28 +129,21 @@ namespace MassTransit
                 new KeyedTopicProducer<TKey, T>(provider.GetRequiredService<ITopicProducer<TKey, T>>(), keyResolver));
         }
 
-        static ITopicProducer<TKey, T> GetProducer<TKey, T>(string topicName, IServiceProvider provider)
+        static ITopicProducer<TKey, T> GetProducer<TKey, T>(string topicName, ITopicProducerProvider rider, IServiceProvider provider)
             where T : class
         {
             var address = new Uri($"topic:{topicName}");
 
-            return GetProducer<TKey, T>(address, provider);
+            return GetProducer<TKey, T>(address, rider, provider);
         }
 
-        static ITopicProducer<TKey, T> GetProducer<TKey, T>(Uri address, IServiceProvider provider)
+        static ITopicProducer<TKey, T> GetProducer<TKey, T>(Uri address, ITopicProducerProvider rider, IServiceProvider provider)
             where T : class
         {
-            var rider = provider.GetRequiredService<IKafkaRider>();
+            var producerProvider = rider.GetScopedTopicProducerProvider(provider);
+            ITopicProducer<TKey, T> producer = producerProvider.GetProducer<TKey, T>(address);
 
-            var contextProvider = provider.GetService<ScopedConsumeContextProvider>();
-            if (contextProvider != null)
-            {
-                return contextProvider.HasContext
-                    ? rider.GetProducer<TKey, T>(address, contextProvider.GetContext())
-                    : rider.GetProducer<TKey, T>(address);
-            }
-
-            return rider.GetProducer<TKey, T>(address, provider.GetService<ConsumeContext>());
+            return new ScopedTopicProducer<TKey, T>(producer, provider);
         }
     }
 }

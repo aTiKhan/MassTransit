@@ -1,6 +1,8 @@
 ﻿namespace MassTransit.ActiveMqTransport.Configuration
 {
     using System;
+    using System.Threading.Channels;
+    using Apache.NMS;
     using MassTransit.Configuration;
     using Topology;
     using Transports;
@@ -21,12 +23,14 @@
         {
             _busConfiguration = busConfiguration;
 
-            _hostSettings = new ConfigurationHostSettings(new Uri("activemq://localhost"));
+            _hostSettings = new OpenWireHostSettings(new Uri("activemq://localhost"));
             _topology = new ActiveMqBusTopology(this, topologyConfiguration);
 
             ReceiveTransportRetryPolicy = Retry.CreatePolicy(x =>
             {
                 x.Handle<ConnectionException>();
+                x.Handle<NMSException>();
+                x.Handle<ChannelClosedException>();
 
                 x.Exponential(1000, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(3));
             });
@@ -43,6 +47,8 @@
             get => _hostSettings;
             set => _hostSettings = value ?? throw new ArgumentNullException(nameof(value));
         }
+
+        public bool IsArtemis { get; set; }
 
         public IConnectionContextSupervisor ConnectionContextSupervisor => _connectionContext.Supervisor;
 

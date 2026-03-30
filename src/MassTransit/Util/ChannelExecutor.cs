@@ -14,6 +14,7 @@ namespace MassTransit.Util
         readonly SemaphoreSlim _limit;
         readonly Task _readerTask;
         readonly object _syncLock;
+        bool _disposed;
 
         public ChannelExecutor(int prefetchCount, int concurrencyLimit)
         {
@@ -56,11 +57,16 @@ namespace MassTransit.Util
 
         public async ValueTask DisposeAsync()
         {
-            _channel.Writer.Complete();
+            if (_disposed)
+                return;
+
+            _channel.Writer.TryComplete();
 
             await _readerTask.ConfigureAwait(false);
 
             _limit.Dispose();
+
+            _disposed = true;
         }
 
         public void PushWithWait(Func<Task> method, CancellationToken cancellationToken = default)
@@ -115,7 +121,7 @@ namespace MassTransit.Util
 
         public async Task<T> Run<T>(Func<Task<T>> method, CancellationToken cancellationToken = default)
         {
-            var future = new Future<T>(method, cancellationToken);
+            var future = new RunFuture<T>(method, cancellationToken);
 
             await _channel.Writer.WriteAsync(future, cancellationToken).ConfigureAwait(false);
 
@@ -151,7 +157,8 @@ namespace MassTransit.Util
 
                 while (await _channel.Reader.WaitToReadAsync().ConfigureAwait(false))
                 {
-                    if (!_channel.Reader.TryRead(out var future))
+                    // peek the first future in the channel, so the channel remains blocked if PrefetchCount = 1
+                    if (!_channel.Reader.TryPeek(out var future))
                         continue;
 
                     await _limit.WaitAsync().ConfigureAwait(false);
@@ -168,7 +175,16 @@ namespace MassTransit.Util
                             Monitor.PulseAll(_syncLock);
                     }
 
-                    pending.Add(Task.Run(() => RunFuture()));
+                    var task = Task.Run(() => RunFuture());
+
+                    // this will keep the channel blocked if trying to process a single future at a time
+                    if (_concurrencyLimit == 1)
+                        await task.ConfigureAwait(false);
+                    else
+                        pending.Add(task);
+
+                    // finally, read the future off the channel to make room for the next future
+                    await _channel.Reader.ReadAsync().ConfigureAwait(false);
                 }
 
                 await pending.Completed().ConfigureAwait(false);
@@ -197,6 +213,51 @@ namespace MassTransit.Util
             readonly Func<Task<T>> _method;
 
             public Future(Func<Task<T>> method, CancellationToken cancellationToken)
+            {
+                _method = method;
+                _cancellationToken = cancellationToken;
+                _completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            /// <summary>
+            /// The post-execution result, which can be awaited
+            /// </summary>
+            public Task<T> Completed => _completion.Task;
+
+            public async Task Run()
+            {
+                if (_cancellationToken.IsCancellationRequested)
+                {
+                    _completion.TrySetCanceled(_cancellationToken);
+                    return;
+                }
+
+                try
+                {
+                    var result = await _method().ConfigureAwait(false);
+
+                    _completion.TrySetResult(result);
+                }
+                catch (OperationCanceledException exception) when (exception.CancellationToken == _cancellationToken)
+                {
+                    _completion.TrySetCanceled(exception.CancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    _completion.TrySetException(exception);
+                }
+            }
+        }
+
+
+        readonly struct RunFuture<T> :
+            IFuture
+        {
+            readonly CancellationToken _cancellationToken;
+            readonly TaskCompletionSource<T> _completion;
+            readonly Func<Task<T>> _method;
+
+            public RunFuture(Func<Task<T>> method, CancellationToken cancellationToken)
             {
                 _method = method;
                 _cancellationToken = cancellationToken;

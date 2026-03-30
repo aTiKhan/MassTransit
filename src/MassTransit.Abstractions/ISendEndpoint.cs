@@ -59,8 +59,7 @@ namespace MassTransit
         Task Send(object message, Type messageType, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Sends an object as a message, using the message type specified. If the object cannot be cast
-        /// to the specified message type, an exception will be thrown.
+        /// Sends an object as a message.
         /// </summary>
         /// <param name="message">The message object</param>
         /// <param name="pipe"></param>
@@ -80,8 +79,7 @@ namespace MassTransit
         Task Send(object message, Type messageType, IPipe<SendContext> pipe, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Sends an interface message, initializing the properties of the interface using the anonymous
-        /// object specified
+        /// Sends an interface message, initializing the properties of the interface using the anonymous object specified
         /// </summary>
         /// <typeparam name="T">The interface type to send</typeparam>
         /// <param name="values">The property values to initialize on the interface</param>
@@ -91,8 +89,7 @@ namespace MassTransit
             where T : class;
 
         /// <summary>
-        /// Sends an interface message, initializing the properties of the interface using the anonymous
-        /// object specified
+        /// Sends an interface message, initializing the properties of the interface using the anonymous object specified
         /// </summary>
         /// <typeparam name="T">The interface type to send</typeparam>
         /// <param name="values">The property values to initialize on the interface</param>
@@ -103,8 +100,7 @@ namespace MassTransit
             where T : class;
 
         /// <summary>
-        /// Sends an interface message, initializing the properties of the interface using the anonymous
-        /// object specified
+        /// Sends an interface message, initializing the properties of the interface using the anonymous object specified
         /// </summary>
         /// <typeparam name="T">The interface type to send</typeparam>
         /// <param name="values">The property values to initialize on the interface</param>

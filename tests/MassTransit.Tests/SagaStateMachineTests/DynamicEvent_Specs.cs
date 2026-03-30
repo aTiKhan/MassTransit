@@ -2,7 +2,6 @@ namespace MassTransit.Tests.SagaStateMachineTests
 {
     using System;
     using System.Threading.Tasks;
-    using MassTransit.Saga;
     using MassTransit.Testing;
     using NUnit.Framework;
     using TestFramework;
@@ -12,7 +11,7 @@ namespace MassTransit.Tests.SagaStateMachineTests
         InMemoryTestFixture
     {
         readonly TestStateMachine _machine;
-        readonly InMemorySagaRepository<Instance> _repository;
+        readonly ISagaRepository<Instance> _repository;
 
         static Specifying_dynamic_events_in_a_state_machine()
         {
@@ -34,12 +33,12 @@ namespace MassTransit.Tests.SagaStateMachineTests
             await Bus.Publish(new Start { ServiceId = sagaId });
 
             Guid? saga = await _repository.ShouldContainSaga(sagaId, TestTimeout);
-            Assert.IsTrue(saga.HasValue);
+            Assert.That(saga.HasValue, Is.True);
 
             await Bus.Publish(new Stop { ServiceId = sagaId });
 
             saga = await _repository.ShouldContainSagaInState(sagaId, _machine, x => x.Final, TestTimeout);
-            Assert.IsTrue(saga.HasValue);
+            Assert.That(saga.HasValue, Is.True);
         }
 
         [Test]
@@ -51,7 +50,7 @@ namespace MassTransit.Tests.SagaStateMachineTests
 
             Guid? saga = await _repository.ShouldContainSagaInState(sagaId, _machine, x => x.Running, TestTimeout);
 
-            Assert.IsTrue(saga.HasValue);
+            Assert.That(saga.HasValue, Is.True);
         }
 
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)

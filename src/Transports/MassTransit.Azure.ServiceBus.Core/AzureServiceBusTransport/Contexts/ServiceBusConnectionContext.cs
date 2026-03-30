@@ -57,23 +57,28 @@
             return _client.CreateSender(entityPath);
         }
 
-        public async Task<QueueProperties> CreateQueue(CreateQueueOptions createQueueOptions)
+        public async Task<QueueProperties> CreateQueue(CreateQueueOptions createQueueOptions, CancellationToken cancellationToken)
         {
-            QueueProperties queueProperties;
-            var queueExists = await QueueExistsAsync(createQueueOptions.Name).ConfigureAwait(false);
-            if (queueExists)
-                queueProperties = await GetQueueAsync(createQueueOptions.Name).ConfigureAwait(false);
-            else
+            QueueProperties queueProperties = null;
+            try
+            {
+                queueProperties = await GetQueueAsync(createQueueOptions.Name, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ServiceBusException exception) when (exception.Reason == ServiceBusFailureReason.MessagingEntityNotFound)
+            {
+            }
+
+            if (queueProperties == null)
             {
                 try
                 {
                     TransportLogMessages.CreateQueue(createQueueOptions.Name);
 
-                    queueProperties = await CreateQueueAsync(createQueueOptions).ConfigureAwait(false);
+                    queueProperties = await CreateQueueAsync(createQueueOptions, cancellationToken).ConfigureAwait(false);
                 }
                 catch (ServiceBusException sbe) when (sbe.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
                 {
-                    queueProperties = await GetQueueAsync(createQueueOptions.Name).ConfigureAwait(false);
+                    queueProperties = await GetQueueAsync(createQueueOptions.Name, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -92,23 +97,28 @@
             return queueProperties;
         }
 
-        public async Task<TopicProperties> CreateTopic(CreateTopicOptions createTopicOptions)
+        public async Task<TopicProperties> CreateTopic(CreateTopicOptions createTopicOptions, CancellationToken cancellationToken)
         {
-            TopicProperties topicProperties;
-            var topicExists = await TopicExistsAsync(createTopicOptions.Name).ConfigureAwait(false);
-            if (topicExists)
-                topicProperties = await GetTopicAsync(createTopicOptions.Name).ConfigureAwait(false);
-            else
+            TopicProperties topicProperties = null;
+            try
+            {
+                topicProperties = await GetTopicAsync(createTopicOptions.Name, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ServiceBusException exception) when (exception.Reason == ServiceBusFailureReason.MessagingEntityNotFound)
+            {
+            }
+
+            if (topicProperties == null)
             {
                 try
                 {
                     TransportLogMessages.CreateTopic(createTopicOptions.Name);
 
-                    topicProperties = await CreateTopicAsync(createTopicOptions).ConfigureAwait(false);
+                    topicProperties = await CreateTopicAsync(createTopicOptions, cancellationToken).ConfigureAwait(false);
                 }
                 catch (ServiceBusException e) when (e.Reason == ServiceBusFailureReason.MessagingEntityAlreadyExists)
                 {
-                    topicProperties = await GetTopicAsync(createTopicOptions.Name).ConfigureAwait(false);
+                    topicProperties = await GetTopicAsync(createTopicOptions.Name, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -125,65 +135,78 @@
         }
 
         public async Task<SubscriptionProperties> CreateTopicSubscription(CreateSubscriptionOptions createSubscriptionOptions, CreateRuleOptions rule,
-            RuleFilter filter)
+            RuleFilter filter, CancellationToken cancellationToken)
         {
             var create = true;
             SubscriptionProperties subscriptionProperties = null;
             try
             {
-                subscriptionProperties = await GetSubscriptionAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName)
+                subscriptionProperties = await GetSubscriptionAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, cancellationToken)
                     .ConfigureAwait(false);
 
                 string NormalizeForwardTo(string forwardTo)
                 {
                     return string.IsNullOrEmpty(forwardTo)
                         ? string.Empty
-                        : forwardTo.Replace(Endpoint.ToString(), string.Empty).Trim('/');
+                        : Uri.IsWellFormedUriString(forwardTo, UriKind.Absolute)
+                            ? new Uri(forwardTo).AbsolutePath.TrimStart('/')
+                            : forwardTo.Replace(Endpoint.ToString(), string.Empty).Trim('/');
                 }
 
                 var targetForwardTo = NormalizeForwardTo(createSubscriptionOptions.ForwardTo);
                 var currentForwardTo = NormalizeForwardTo(subscriptionProperties.ForwardTo);
 
-                if (!targetForwardTo.Equals(currentForwardTo))
+                if (!targetForwardTo.Equals(currentForwardTo)
+                    || createSubscriptionOptions.LockDuration != subscriptionProperties.LockDuration
+                    || createSubscriptionOptions.MaxDeliveryCount != subscriptionProperties.MaxDeliveryCount
+                    || createSubscriptionOptions.EnableBatchedOperations != subscriptionProperties.EnableBatchedOperations
+                    || createSubscriptionOptions.DeadLetteringOnMessageExpiration != subscriptionProperties.DeadLetteringOnMessageExpiration)
                 {
                     LogContext.Debug?.Log("Updating subscription: {Subscription} ({Topic} -> {ForwardTo})", subscriptionProperties.SubscriptionName,
-                        subscriptionProperties.TopicName, subscriptionProperties.ForwardTo);
+                        createSubscriptionOptions.TopicName, createSubscriptionOptions.ForwardTo);
 
-                    await UpdateSubscriptionAsync(subscriptionProperties).ConfigureAwait(false);
+                    subscriptionProperties.ForwardTo = createSubscriptionOptions.ForwardTo;
+                    subscriptionProperties.LockDuration = createSubscriptionOptions.LockDuration;
+                    subscriptionProperties.MaxDeliveryCount = createSubscriptionOptions.MaxDeliveryCount;
+                    subscriptionProperties.EnableBatchedOperations = createSubscriptionOptions.EnableBatchedOperations;
+                    subscriptionProperties.DeadLetteringOnMessageExpiration = createSubscriptionOptions.DeadLetteringOnMessageExpiration;
+
+                    await UpdateSubscriptionAsync(subscriptionProperties, cancellationToken).ConfigureAwait(false);
                 }
 
                 if (rule != null)
                 {
-                    var ruleProperties = await GetRuleAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, rule.Name)
+                    var ruleProperties = await GetRuleAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, rule.Name, cancellationToken)
                         .ConfigureAwait(false);
-                    if (rule.Name == ruleProperties.Name && (rule.Filter != ruleProperties.Filter || rule.Action != ruleProperties.Action))
+                    if (rule.Name == ruleProperties.Name && (!(rule.Filter?.Equals(ruleProperties.Filter) ?? ruleProperties.Filter == null)
+                            || !(rule.Action?.Equals(ruleProperties.Action) ?? ruleProperties.Action == null)))
                     {
+                        LogContext.Debug?.Log("Updating subscription Rule: {Rule} ({DescriptionFilter} -> {Filter})", rule.Name,
+                            ruleProperties.Filter?.ToString(), rule.Filter?.ToString());
+
                         ruleProperties.Filter = rule.Filter;
                         ruleProperties.Action = rule.Action;
 
-                        LogContext.Debug?.Log("Updating subscription Rule: {Rule} ({DescriptionFilter} -> {Filter})", rule.Name,
-                            ruleProperties.Filter.ToString(), rule.Filter.ToString());
-
-                        await UpdateRuleAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, ruleProperties)
+                        await UpdateRuleAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, ruleProperties, cancellationToken)
                             .ConfigureAwait(false);
                     }
                 }
                 else if (filter != null)
                 {
-                    IList<RuleProperties> rules = await GetRulesAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName)
+                    IList<RuleProperties> rules = await GetRulesAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, cancellationToken)
                         .ConfigureAwait(false);
                     if (rules.Count == 1)
                     {
                         var existingRule = rules[0];
 
-                        if (Guid.TryParse(existingRule.Name, out _) && existingRule.Filter != filter)
+                        if (Guid.TryParse(existingRule.Name, out _) && !(existingRule.Filter?.Equals(filter) ?? filter == null))
                         {
                             LogContext.Debug?.Log("Updating subscription filter: {Rule} ({DescriptionFilter} -> {Filter})", existingRule.Name,
-                                existingRule.Filter.ToString(), filter.ToString());
+                                existingRule.Filter?.ToString(), filter?.ToString());
 
                             existingRule.Filter = filter;
 
-                            await UpdateRuleAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, existingRule)
+                            await UpdateRuleAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, existingRule, cancellationToken)
                                 .ConfigureAwait(false);
                         }
                     }
@@ -205,10 +228,10 @@
                         createSubscriptionOptions.ForwardTo);
 
                     subscriptionProperties = rule != null
-                        ? await CreateSubscriptionAsync(createSubscriptionOptions, rule).ConfigureAwait(false)
+                        ? await CreateSubscriptionAsync(createSubscriptionOptions, rule, cancellationToken).ConfigureAwait(false)
                         : filter != null
-                            ? await CreateSubscriptionAsync(createSubscriptionOptions, filter).ConfigureAwait(false)
-                            : await CreateSubscriptionAsync(createSubscriptionOptions).ConfigureAwait(false);
+                            ? await CreateSubscriptionAsync(createSubscriptionOptions, filter, cancellationToken).ConfigureAwait(false)
+                            : await CreateSubscriptionAsync(createSubscriptionOptions, cancellationToken).ConfigureAwait(false);
 
                     created = true;
                 }
@@ -218,7 +241,7 @@
 
                 if (!created)
                 {
-                    subscriptionProperties = await GetSubscriptionAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName)
+                    subscriptionProperties = await GetSubscriptionAsync(createSubscriptionOptions.TopicName, createSubscriptionOptions.SubscriptionName, cancellationToken)
                         .ConfigureAwait(false);
                 }
             }
@@ -229,11 +252,11 @@
             return subscriptionProperties;
         }
 
-        public async Task DeleteTopicSubscription(CreateSubscriptionOptions subscriptionOptions)
+        public async Task DeleteTopicSubscription(CreateSubscriptionOptions subscriptionOptions, CancellationToken cancellationToken)
         {
             try
             {
-                await DeleteSubscriptionAsync(subscriptionOptions).ConfigureAwait(false);
+                await DeleteSubscriptionAsync(subscriptionOptions, cancellationToken).ConfigureAwait(false);
 
                 LogContext.Debug?.Log("Subscription Deleted: {Subscription} {Topic}", subscriptionOptions.SubscriptionName, subscriptionOptions.TopicName);
             }
@@ -266,7 +289,8 @@
                 PrefetchCount = settings.PrefetchCount,
                 MaxAutoLockRenewalDuration = settings.MaxAutoRenewDuration,
                 ReceiveMode = ServiceBusReceiveMode.PeekLock,
-                MaxConcurrentCallsPerSession = settings.MaxConcurrentCalls,
+                MaxConcurrentSessions = settings.MaxConcurrentSessions,
+                MaxConcurrentCallsPerSession = settings.MaxConcurrentCallsPerSession,
                 SessionIdleTimeout = settings.SessionIdleTimeout
             };
         }
@@ -283,92 +307,72 @@
             };
         }
 
-        Task<QueueProperties> GetQueueAsync(string path)
+        async Task<QueueProperties> GetQueueAsync(string path, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.GetQueueAsync(path)).Value);
+            return await _administrationClient.GetQueueAsync(path, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<bool> QueueExistsAsync(string path)
+        async Task<QueueProperties> CreateQueueAsync(CreateQueueOptions createQueueOptions, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.QueueExistsAsync(path)).Value);
+            return await _administrationClient.CreateQueueAsync(createQueueOptions, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<QueueProperties> CreateQueueAsync(CreateQueueOptions createQueueOptions)
+        async Task<TopicProperties> GetTopicAsync(string path, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.CreateQueueAsync(createQueueOptions)).Value);
+            return await _administrationClient.GetTopicAsync(path, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<TopicProperties> GetTopicAsync(string path)
+        async Task<TopicProperties> CreateTopicAsync(CreateTopicOptions createTopicOptions, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.GetTopicAsync(path)).Value);
+            return await _administrationClient.CreateTopicAsync(createTopicOptions, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<bool> TopicExistsAsync(string path)
+        async Task<SubscriptionProperties> GetSubscriptionAsync(string topicPath, string subscriptionName, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.TopicExistsAsync(path)).Value);
+            return await _administrationClient.GetSubscriptionAsync(topicPath, subscriptionName, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<TopicProperties> CreateTopicAsync(CreateTopicOptions createTopicOptions)
+        async Task DeleteSubscriptionAsync(CreateSubscriptionOptions subscriptionOptions, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.CreateTopicAsync(createTopicOptions)).Value);
+            await _administrationClient.DeleteSubscriptionAsync(subscriptionOptions.TopicName, subscriptionOptions.SubscriptionName, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        Task<SubscriptionProperties> GetSubscriptionAsync(string topicPath, string subscriptionName)
+        async Task<SubscriptionProperties> UpdateSubscriptionAsync(SubscriptionProperties subscriptionProperties, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.GetSubscriptionAsync(topicPath, subscriptionName)).Value);
+            return await _administrationClient.UpdateSubscriptionAsync(subscriptionProperties, cancellationToken).ConfigureAwait(false);
         }
 
-        Task DeleteSubscriptionAsync(CreateSubscriptionOptions subscriptionOptions)
+        async Task<RuleProperties> GetRuleAsync(string topicPath, string subscriptionName, string ruleName, CancellationToken cancellationToken)
         {
-            return RunOperation(() => _administrationClient.DeleteSubscriptionAsync(subscriptionOptions.TopicName, subscriptionOptions.SubscriptionName));
+            return await _administrationClient.GetRuleAsync(topicPath, subscriptionName, ruleName, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<SubscriptionProperties> UpdateSubscriptionAsync(SubscriptionProperties subscriptionProperties)
+        async Task<IList<RuleProperties>> GetRulesAsync(string topicPath, string subscriptionName, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.UpdateSubscriptionAsync(subscriptionProperties)).Value);
+            return await _administrationClient.GetRulesAsync(topicPath, subscriptionName, cancellationToken).ToListAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        Task<RuleProperties> GetRuleAsync(string topicPath, string subscriptionName, string ruleName)
+        async Task<RuleProperties> UpdateRuleAsync(string topicPath, string subscriptionName, RuleProperties ruleProperties, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.GetRuleAsync(topicPath, subscriptionName, ruleName)).Value);
+            return await _administrationClient.UpdateRuleAsync(topicPath, subscriptionName, ruleProperties, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<IList<RuleProperties>> GetRulesAsync(string topicPath, string subscriptionName)
+        async Task<SubscriptionProperties> CreateSubscriptionAsync(CreateSubscriptionOptions createSubscriptionOptions, CreateRuleOptions rule, CancellationToken cancellationToken)
         {
-            return RunOperation(() => _administrationClient.GetRulesAsync(topicPath, subscriptionName).ToListAsync());
+            return await _administrationClient.CreateSubscriptionAsync(createSubscriptionOptions, rule, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<RuleProperties> UpdateRuleAsync(string topicPath, string subscriptionName, RuleProperties ruleProperties)
-        {
-            return RunOperation(async () => (await _administrationClient.UpdateRuleAsync(topicPath, subscriptionName, ruleProperties)).Value);
-        }
-
-        Task<SubscriptionProperties> CreateSubscriptionAsync(CreateSubscriptionOptions createSubscriptionOptions, CreateRuleOptions rule)
-        {
-            return RunOperation(async () => (await _administrationClient.CreateSubscriptionAsync(createSubscriptionOptions, rule)).Value);
-        }
-
-        Task<SubscriptionProperties> CreateSubscriptionAsync(CreateSubscriptionOptions createSubscriptionOptions, RuleFilter filter)
+        async Task<SubscriptionProperties> CreateSubscriptionAsync(CreateSubscriptionOptions createSubscriptionOptions, RuleFilter filter, CancellationToken cancellationToken)
         {
             var createRuleOptions = new CreateRuleOptions(NewId.NextGuid().ToString(), filter);
-            return RunOperation(async () => (await _administrationClient.CreateSubscriptionAsync(createSubscriptionOptions, createRuleOptions)).Value);
+
+            return await _administrationClient.CreateSubscriptionAsync(createSubscriptionOptions, createRuleOptions, cancellationToken).ConfigureAwait(false);
         }
 
-        Task<SubscriptionProperties> CreateSubscriptionAsync(CreateSubscriptionOptions createSubscriptionOptions)
+        async Task<SubscriptionProperties> CreateSubscriptionAsync(CreateSubscriptionOptions createSubscriptionOptions, CancellationToken cancellationToken)
         {
-            return RunOperation(async () => (await _administrationClient.CreateSubscriptionAsync(createSubscriptionOptions)).Value);
-        }
-
-        async Task<T> RunOperation<T>(Func<Task<T>> operation)
-        {
-            T result = default;
-            result = await operation().ConfigureAwait(false);
-            return result;
-        }
-
-        Task RunOperation(Func<Task> operation)
-        {
-            return operation();
+            return await _administrationClient.CreateSubscriptionAsync(createSubscriptionOptions, cancellationToken).ConfigureAwait(false);
         }
     }
 }

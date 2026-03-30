@@ -2,7 +2,6 @@
 {
     using System;
     using System.Collections.Concurrent;
-    using System.Threading;
     using System.Threading.Tasks;
 
 
@@ -26,7 +25,8 @@
         {
             var converterType = typeof(RetryFaultObserver<>).MakeGenericType(type);
 
-            return (IRetryFaultObserver)Activator.CreateInstance(converterType);
+            return Activator.CreateInstance(converterType) as IRetryFaultObserver
+                ?? throw new InvalidOperationException("Failed to create Retry Fault Observer");
         }
 
 
@@ -52,8 +52,7 @@
 
         static class Cached
         {
-            internal static readonly Lazy<RetryFaultObserverCache> Converters =
-                new Lazy<RetryFaultObserverCache>(() => new RetryFaultObserverCache(), LazyThreadSafetyMode.PublicationOnly);
+            internal static readonly Lazy<RetryFaultObserverCache> Converters = new Lazy<RetryFaultObserverCache>(() => new RetryFaultObserverCache());
         }
     }
 }

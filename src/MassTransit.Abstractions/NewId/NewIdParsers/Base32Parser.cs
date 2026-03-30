@@ -1,6 +1,7 @@
 ﻿namespace MassTransit.NewIdParsers
 {
     using System;
+    using System.Runtime.CompilerServices;
     using System.Threading;
 
 
@@ -15,8 +16,7 @@
         readonly string _chars;
 
         public Base32Parser()
-            :
-            this(ConvertChars)
+            : this(ConvertChars)
         {
         }
 
@@ -33,7 +33,7 @@
             if (text.Length != 26)
                 throw new ArgumentException("The input string must be 26 characters", nameof(text));
 
-            var buffer = _buffer.Value;
+            var buffer = _buffer.Value!;
 
             var bufferOffset = 0;
             var offset = 0;
@@ -71,6 +71,7 @@
             return new NewId(new string(buffer, 0, 32));
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static void ConvertLongToBase16(in char[] buffer, int offset, long value, int count)
         {
             for (var i = count - 1; i >= 0; i--)

@@ -3,6 +3,7 @@ namespace MassTransit.QuartzIntegration
     using System;
     using System.Collections;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Globalization;
     using Metadata;
     using Quartz;
@@ -37,7 +38,7 @@ namespace MassTransit.QuartzIntegration
             _jobDataMap = executionContext.MergedJobDataMap;
             _objectDeserializer = objectDeserializer;
 
-            Guid? messageId = ConvertIdToGuid(_jobDataMap.GetString(nameof(MessageId)));
+            Guid? messageId = _jobDataMap.TryGetString(nameof(MessageId), out var text) ? ConvertIdToGuid(text) : default;
 
             if (messageId.HasValue)
                 _messageId = messageId;
@@ -65,34 +66,34 @@ namespace MassTransit.QuartzIntegration
             return Headers.GetAll();
         }
 
-        public bool TryGetHeader(string key, out object? value)
+        public bool TryGetHeader(string key, [NotNullWhen(true)] out object? value)
         {
             switch (key)
             {
                 case MessageHeaders.MessageId:
                     value = MessageId;
-                    return true;
+                    return value != null;
                 case MessageHeaders.CorrelationId:
                     value = CorrelationId;
-                    return true;
+                    return value != null;
                 case MessageHeaders.ConversationId:
                     value = ConversationId;
-                    return true;
+                    return value != null;
                 case MessageHeaders.RequestId:
                     value = RequestId;
-                    return true;
+                    return value != null;
                 case MessageHeaders.InitiatorId:
                     value = InitiatorId;
-                    return true;
+                    return value != null;
                 case MessageHeaders.SourceAddress:
                     value = SourceAddress;
-                    return true;
+                    return value != null;
                 case MessageHeaders.ResponseAddress:
                     value = ResponseAddress;
-                    return true;
+                    return value != null;
                 case MessageHeaders.FaultAddress:
                     value = FaultAddress;
-                    return true;
+                    return value != null;
             }
 
             return _jobDataMap.TryGetValue(key, out value);
@@ -130,6 +131,9 @@ namespace MassTransit.QuartzIntegration
         public Headers Headers => _headers ??= GetHeaders();
         public HostInfo Host => _hostInfo ??= _jobDataMap.TryGetValue(nameof(Host), out HostInfo? value) ? value! : HostMetadataCache.Empty;
 
+        public IReadOnlyDictionary<string, object>? TransportProperties =>
+            _jobDataMap.TryGetValue<IReadOnlyDictionary<string, object>>("TransportProperties", out var properties) ? properties : default;
+
         Headers GetHeaders()
         {
             var headers = new DictionarySendHeaders();
@@ -153,6 +157,12 @@ namespace MassTransit.QuartzIntegration
 
             if (_jobDataMap.TryGetValue("TokenId", out var tokenId))
                 headers.Set(MessageHeaders.SchedulingTokenId, tokenId);
+
+            if (!string.IsNullOrWhiteSpace(_executionContext.Trigger.Key.Name))
+                headers.Set(MessageHeaders.Quartz.ScheduleId, _executionContext.Trigger.Key.Name.Replace(QuartzConstants.RecurringTriggerPrefix, ""));
+
+            if (!string.IsNullOrWhiteSpace(_executionContext.Trigger.Key.Group))
+                headers.Set(MessageHeaders.Quartz.ScheduleGroup, _executionContext.Trigger.Key.Group);
 
             return headers;
         }

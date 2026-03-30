@@ -1,21 +1,44 @@
-namespace MassTransit.AmazonSqsTransport
+namespace MassTransit.AmazonSqsTransport;
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Amazon.SimpleNotificationService;
+using Amazon.SimpleNotificationService.Model;
+
+
+public class TopicInfo :
+    IAsyncDisposable
 {
-    using System.Collections.Generic;
+    readonly Lazy<IBatcher<PublishBatchRequestEntry>> _batchPublisher;
+    bool _disposed;
 
-
-    public class TopicInfo
+    public TopicInfo(string entityName, string arn, IAmazonSimpleNotificationService client, CancellationToken cancellationToken, bool existing)
     {
-        readonly IDictionary<string, string> _attributes;
+        EntityName = entityName;
+        Arn = arn;
+        Existing = existing;
 
-        public TopicInfo(string entityName, string arn, IDictionary<string, string> attributes)
-        {
-            _attributes = attributes;
+        _batchPublisher = new Lazy<IBatcher<PublishBatchRequestEntry>>(() => new PublishBatcher(client, arn, cancellationToken));
+    }
 
-            EntityName = entityName;
-            Arn = arn;
-        }
+    public string EntityName { get; }
+    public string Arn { get; }
+    public bool Existing { get; }
 
-        public string EntityName { get; }
-        public string Arn { get; }
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        if (_batchPublisher.IsValueCreated)
+            await _batchPublisher.Value.DisposeAsync().ConfigureAwait(false);
+    }
+
+    public Task Publish(PublishBatchRequestEntry entry, CancellationToken cancellationToken)
+    {
+        return _batchPublisher.Value.Execute(entry, cancellationToken);
     }
 }

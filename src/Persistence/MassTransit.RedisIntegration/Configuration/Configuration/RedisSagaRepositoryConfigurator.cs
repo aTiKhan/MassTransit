@@ -2,6 +2,7 @@ namespace MassTransit.Configuration
 {
     using System;
     using System.Collections.Generic;
+    using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using RedisIntegration.Saga;
     using Saga;
@@ -13,15 +14,14 @@ namespace MassTransit.Configuration
         ISpecification
         where TSaga : class, ISagaVersion
     {
-        ConfigurationOptions _configurationOptions;
-        Func<IServiceProvider, ConnectionMultiplexer> _connectionFactory;
+        RedisConnectionFactory _connectionFactory;
         SelectDatabase _databaseSelector;
 
         public RedisSagaRepositoryConfigurator()
         {
             ConcurrencyMode = ConcurrencyMode.Optimistic;
             KeyPrefix = "";
-            LockRetryTimeout = LockTimeout = TimeSpan.FromSeconds(30);
+            LockTimeout = TimeSpan.FromSeconds(30);
 
             DatabaseConfiguration("127.0.0.1");
             _databaseSelector = SelectDefaultDatabase;
@@ -31,8 +31,8 @@ namespace MassTransit.Configuration
         public string KeyPrefix { get; set; }
         public string LockSuffix { get; set; }
         public TimeSpan LockTimeout { get; set; }
-        public TimeSpan LockRetryTimeout { get; set; }
         public TimeSpan? Expiry { get; set; }
+        public IRetryPolicy RetryPolicy { get; set; }
 
         public void DatabaseConfiguration(string configuration)
         {
@@ -41,19 +41,22 @@ namespace MassTransit.Configuration
 
         public void DatabaseConfiguration(ConfigurationOptions configurationOptions)
         {
-            _configurationOptions = configurationOptions;
+            IConnectionMultiplexer Factory(IServiceProvider provider)
+            {
+                return provider.GetRequiredService<IConnectionMultiplexerFactory>().GetConnectionMultiplexer(configurationOptions);
+            }
 
-            _connectionFactory = provider => ConnectionMultiplexer.Connect(_configurationOptions);
+            _connectionFactory = Factory;
         }
 
-        public void ConnectionFactory(Func<ConnectionMultiplexer> connectionFactory)
+        public void ConnectionFactory(Func<IConnectionMultiplexer> connectionFactory)
         {
-            _connectionFactory = provider => connectionFactory();
+            _connectionFactory = _ => connectionFactory();
         }
 
-        public void ConnectionFactory(Func<IServiceProvider, ConnectionMultiplexer> connectionFactory)
+        public void ConnectionFactory(Func<IServiceProvider, IConnectionMultiplexer> connectionFactory)
         {
-            _connectionFactory = connectionFactory;
+            _connectionFactory = x => connectionFactory(x);
         }
 
         public void SelectDatabase(SelectDatabase databaseSelector)
@@ -67,17 +70,16 @@ namespace MassTransit.Configuration
                 yield return this.Failure("ConnectionFactory", "must be specified");
             if (LockTimeout <= TimeSpan.Zero)
                 yield return this.Failure("LockTimeout", "Must be > TimeSpan.Zero");
-            if (LockRetryTimeout <= TimeSpan.Zero)
-                yield return this.Failure("LockRetryTimeout", "Must be > TimeSpan.Zero");
         }
 
-        public void Register<T>(ISagaRepositoryRegistrationConfigurator<T> configurator)
-            where T : class, ISagaVersion
+        public void Register(ISagaRepositoryRegistrationConfigurator<TSaga> configurator)
         {
-            configurator.TryAddSingleton(_connectionFactory);
-            configurator.TryAddSingleton(new RedisSagaRepositoryOptions<T>(ConcurrencyMode, LockTimeout, LockSuffix, KeyPrefix, _databaseSelector, Expiry));
-            configurator.RegisterSagaRepository<T, DatabaseContext<T>, SagaConsumeContextFactory<DatabaseContext<T>, T>,
-                RedisSagaRepositoryContextFactory<T>>();
+            configurator.TryAddSingleton<IConnectionMultiplexerFactory, ConnectionMultiplexerFactory>();
+            configurator.TryAddSingleton(new RedisSagaRepositoryOptions<TSaga>(ConcurrencyMode, LockTimeout, LockSuffix, KeyPrefix, _connectionFactory,
+                _databaseSelector, Expiry, RetryPolicy));
+            configurator.RegisterLoadSagaRepository<TSaga, RedisSagaRepositoryContextFactory<TSaga>>();
+            configurator.RegisterSagaRepository<TSaga, DatabaseContext<TSaga>, SagaConsumeContextFactory<DatabaseContext<TSaga>, TSaga>,
+                RedisSagaRepositoryContextFactory<TSaga>>();
         }
 
         static IDatabase SelectDefaultDatabase(IConnectionMultiplexer multiplexer)

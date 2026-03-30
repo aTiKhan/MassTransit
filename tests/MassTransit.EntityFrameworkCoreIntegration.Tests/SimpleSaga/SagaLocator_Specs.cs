@@ -3,14 +3,10 @@
     using System;
     using System.Threading.Tasks;
     using DataAccess;
-    using MassTransit.Saga;
     using MassTransit.Tests.Saga;
     using MassTransit.Tests.Saga.Messages;
-    using Microsoft.EntityFrameworkCore;
     using NUnit.Framework;
-    using Saga;
     using Shared;
-    using Shouldly;
     using Testing;
 
 
@@ -31,15 +27,15 @@
 
             Guid? foundId = await _sagaRepository.Value.ShouldContainSaga(message.CorrelationId, TestTimeout);
 
-            foundId.HasValue.ShouldBe(true);
+            Assert.That(foundId, Is.Not.Null);
 
-            var nextMessage = new CompleteSimpleSaga {CorrelationId = sagaId};
+            var nextMessage = new CompleteSimpleSaga { CorrelationId = sagaId };
 
             await InputQueueSendEndpoint.Send(nextMessage);
 
             foundId = await _sagaRepository.Value.ShouldContainSaga(x => x.CorrelationId == sagaId && x.Completed, TestTimeout);
 
-            foundId.HasValue.ShouldBe(true);
+            Assert.That(foundId, Is.Not.Null);
         }
 
         [Test]
@@ -52,7 +48,7 @@
 
             Guid? foundId = await _sagaRepository.Value.ShouldContainSaga(message.CorrelationId, TestTimeout);
 
-            foundId.HasValue.ShouldBe(true);
+            Assert.That(foundId, Is.Not.Null);
         }
 
         readonly Lazy<ISagaRepository<SimpleSaga>> _sagaRepository;

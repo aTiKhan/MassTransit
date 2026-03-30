@@ -12,22 +12,18 @@ namespace MassTransit.EntityFrameworkCoreIntegration
         where TSaga : class, ISaga
     {
         public static ISagaRepository<TSaga> CreateOptimistic(ISagaDbContextFactory<TSaga> dbContextFactory,
-            Func<IQueryable<TSaga>, IQueryable<TSaga>> queryCustomization = null)
+            Func<IQueryable<TSaga>, IQueryable<TSaga>> queryCustomization = null, bool isTransactionEnabled = true)
         {
-            ILoadQueryProvider<TSaga> queryProvider = new DefaultSagaLoadQueryProvider<TSaga>();
-            if (queryCustomization != null)
-                queryProvider = new CustomSagaLoadQueryProvider<TSaga>(queryProvider, queryCustomization);
-
-            var queryExecutor = new OptimisticLoadQueryExecutor<TSaga>(queryProvider);
-            var lockStrategy = new OptimisticSagaRepositoryLockStrategy<TSaga>(queryProvider, queryExecutor, IsolationLevel.ReadCommitted);
+            var queryExecutor = new OptimisticLoadQueryExecutor<TSaga>(queryCustomization);
+            var lockStrategy = new OptimisticSagaRepositoryLockStrategy<TSaga>(queryExecutor, queryCustomization, IsolationLevel.ReadCommitted, isTransactionEnabled);
 
             return CreateRepository(dbContextFactory, lockStrategy);
         }
 
         public static ISagaRepository<TSaga> CreateOptimistic(Func<DbContext> dbContextFactory,
-            Func<IQueryable<TSaga>, IQueryable<TSaga>> queryCustomization = null)
+            Func<IQueryable<TSaga>, IQueryable<TSaga>> queryCustomization = null, bool isTransactionEnabled = true)
         {
-            return CreateOptimistic(new DelegateSagaDbContextFactory<TSaga>(dbContextFactory), queryCustomization);
+            return CreateOptimistic(new DelegateSagaDbContextFactory<TSaga>(dbContextFactory), queryCustomization, isTransactionEnabled);
         }
 
         public static ISagaRepository<TSaga> CreatePessimistic(ISagaDbContextFactory<TSaga> dbContextFactory,
@@ -55,7 +51,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration
             var repositoryFactory =
                 new EntityFrameworkSagaRepositoryContextFactory<TSaga>(dbContextFactory, consumeContextFactory, lockStrategy);
 
-            return new SagaRepository<TSaga>(repositoryFactory);
+            return new SagaRepository<TSaga>(repositoryFactory, repositoryFactory, repositoryFactory);
         }
     }
 }

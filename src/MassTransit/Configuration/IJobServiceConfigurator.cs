@@ -1,7 +1,6 @@
 namespace MassTransit
 {
     using System;
-    using JobService;
 
 
     public interface IJobServiceConfigurator
@@ -48,16 +47,6 @@ namespace MassTransit
         /// Time to wait before checking the status of a job to ensure it is still running (not dead)
         /// </summary>
         TimeSpan StatusCheckInterval { set; }
-
-        /// <summary>
-        /// Timeout on request to allocate a job slot
-        /// </summary>
-        TimeSpan SlotRequestTimeout { set; }
-
-        /// <summary>
-        /// Timeout to wait for a job to start
-        /// </summary>
-        TimeSpan StartJobTimeout { set; }
 
         /// <summary>
         /// The number of times to retry a suspect job before it is faulted. Defaults to zero.

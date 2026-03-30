@@ -1,134 +1,126 @@
 ﻿namespace MassTransit.EventHubIntegration
 {
     using System;
+    using System.Text;
+    using System.Threading;
     using System.Threading.Tasks;
+    using Azure.Messaging.EventHubs;
     using Azure.Messaging.EventHubs.Processor;
-    using Internals;
+    using Checkpoints;
     using MassTransit.Middleware;
     using Transports;
     using Util;
 
 
     public class EventHubDataReceiver :
-        Agent,
+        ConsumerAgent<PartitionOffset>,
         IEventHubDataReceiver
     {
+        readonly CancellationTokenSource _checkpointTokenSource;
+        readonly EventProcessorClient _client;
         readonly ReceiveEndpointContext _context;
-        readonly TaskCompletionSource<bool> _deliveryComplete;
-        readonly IReceivePipeDispatcher _dispatcher;
-        readonly ChannelExecutor _executor;
-        readonly ProcessorContext _processorContext;
+        readonly IChannelExecutorPool<ProcessEventArgs> _executorPool;
+        readonly SemaphoreSlim _limit;
+        readonly IProcessorLockContext _lockContext;
 
-        public EventHubDataReceiver(ReceiveEndpointContext context, ProcessorContext processorContext)
+        public EventHubDataReceiver(ReceiveSettings receiveSettings, ReceiveEndpointContext context, ProcessorContext processorContext)
+            : base(context)
         {
             _context = context;
-            _processorContext = processorContext;
+            _checkpointTokenSource = CancellationTokenSource.CreateLinkedTokenSource(Stopped);
+            _limit = new SemaphoreSlim(receiveSettings.PrefetchCount);
 
-            _deliveryComplete = TaskUtil.GetTask<bool>();
+            var lockContext = new ProcessorLockContext(processorContext, receiveSettings, _checkpointTokenSource.Token);
 
-            _dispatcher = context.CreateReceivePipeDispatcher();
-            _dispatcher.ZeroActivity += HandleDeliveryComplete;
+            IHashGenerator hashGenerator = new Murmur3UnsafeHashGenerator();
+            _executorPool = new PartitionChannelExecutorPool<ProcessEventArgs>(GetBytes, hashGenerator,
+                receiveSettings.ConcurrentMessageLimit,
+                receiveSettings.ConcurrentDeliveryLimit);
 
-            var prefetchCount = Math.Max(1000, processorContext.ReceiveSettings.CheckpointMessageCount / 10);
+            _client = lockContext.Client;
+            _lockContext = lockContext;
 
-            _executor = new ChannelExecutor(prefetchCount, processorContext.ReceiveSettings.ConcurrentMessageLimit);
-        }
+            _client.ProcessErrorAsync += HandleError;
+            _client.ProcessEventAsync += HandleMessage;
 
-        public long DeliveryCount => _dispatcher.DispatchCount;
+            TrySetManualConsumeTask();
 
-        public int ConcurrentDeliveryCount => _dispatcher.MaxConcurrentDispatchCount;
-
-        public async Task Start()
-        {
-            _processorContext.ProcessEvent += HandleMessage;
-            _processorContext.ProcessError += HandleError;
-
-            await _processorContext.StartProcessingAsync(Stopping).ConfigureAwait(false);
-
-            SetReady();
-        }
-
-        async Task HandleMessage(ProcessEventArgs eventArgs)
-        {
-            LogContext.SetCurrentIfNull(_context.LogContext);
-
-            try
-            {
-                await _executor.Push(() => Handle(eventArgs), Stopping).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException e) when (e.CancellationToken == Stopping)
-            {
-            }
+            SetReady(_client.StartProcessingAsync(Stopping));
         }
 
         async Task HandleError(ProcessErrorEventArgs eventArgs)
         {
             LogContext.SetCurrentIfNull(_context.LogContext);
 
-            var activeDispatchCount = _dispatcher.ActiveDispatchCount;
-            if (activeDispatchCount == 0)
+            if (IsIdle)
             {
                 LogContext.Debug?.Log("Receiver shutdown completed: {InputAddress}, PartitionId: {PartitionId}", _context.InputAddress, eventArgs.PartitionId);
 
-                _deliveryComplete.TrySetResult(true);
-
-                SetCompleted(TaskUtil.Faulted<bool>(eventArgs.Exception));
+                TrySetConsumeException(eventArgs.Exception);
             }
+        }
+
+        static byte[] GetBytes(ProcessEventArgs eventArgs)
+        {
+            var partitionKey = eventArgs.Data.PartitionKey;
+            return !string.IsNullOrEmpty(partitionKey) ? Encoding.UTF8.GetBytes(partitionKey) : [];
+        }
+
+        async Task HandleMessage(ProcessEventArgs eventArgs)
+        {
+            if (IsStopping || !eventArgs.HasEvent)
+                return;
+
+            await _limit.WaitAsync(Stopping).ConfigureAwait(false);
+            await _lockContext.Pending(eventArgs).ConfigureAwait(false);
+            await _executorPool.Push(eventArgs, () => Handle(eventArgs), Stopping).ConfigureAwait(false);
         }
 
         async Task Handle(ProcessEventArgs eventArgs)
         {
-            var context = new EventHubReceiveContext(eventArgs, _context, _processorContext);
+            if (IsStopping)
+                return;
+
+            var context = new EventHubReceiveContext(eventArgs, _context);
+            var cancellationToken = context.CancellationToken;
+            CancellationTokenRegistration? registration = null;
+            if (cancellationToken.CanBeCanceled)
+                registration = cancellationToken.Register(() => _lockContext.Canceled(eventArgs, cancellationToken));
 
             try
             {
-                await _dispatcher.Dispatch(context, context).ConfigureAwait(false);
+                await Dispatch(eventArgs, context, new EventHubReceiveLockContext(eventArgs, _lockContext)).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                context.LogTransportFaulted(exception);
             }
             finally
             {
+                registration?.Dispose();
                 context.Dispose();
+                _limit.Release();
             }
         }
 
-        async Task HandleDeliveryComplete()
+        protected override async Task ActiveAndActualAgentsCompleted(StopContext context)
         {
-            if (IsStopping)
-            {
-                LogContext.Debug?.Log("Consumer shutdown completed: {InputAddress}", _context.InputAddress);
+            var stopProcessing = _client.StopProcessingAsync();
 
-                _deliveryComplete.TrySetResult(true);
-            }
-        }
+            await base.ActiveAndActualAgentsCompleted(context).ConfigureAwait(false);
 
-        protected override async Task StopAgent(StopContext context)
-        {
-            await _processorContext.StopProcessingAsync().ConfigureAwait(false);
+            await _executorPool.DisposeAsync().ConfigureAwait(false);
 
-            _processorContext.ProcessEvent -= HandleMessage;
-            _processorContext.ProcessError -= HandleError;
+            // There is not point to wait any longer, we drained our queue
+            _checkpointTokenSource.Cancel();
 
-            await _executor.DisposeAsync().ConfigureAwait(false);
+            await stopProcessing.ConfigureAwait(false);
+            _client.ProcessEventAsync -= HandleMessage;
+            _client.ProcessErrorAsync -= HandleError;
 
-            LogContext.Debug?.Log("Stopping consumer: {InputAddress}", _context.InputAddress);
-
-            SetCompleted(ActiveAndActualAgentsCompleted(context));
-
-            await Completed.ConfigureAwait(false);
-        }
-
-        async Task ActiveAndActualAgentsCompleted(StopContext context)
-        {
-            if (_dispatcher.ActiveDispatchCount > 0)
-            {
-                try
-                {
-                    await _deliveryComplete.Task.OrCanceled(context.CancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    LogContext.Warning?.Log("Stop canceled waiting for message consumers to complete: {InputAddress}", _context.InputAddress);
-                }
-            }
+            await _lockContext.DisposeAsync().ConfigureAwait(false);
+            _checkpointTokenSource.Dispose();
+            _limit.Dispose();
         }
     }
 }

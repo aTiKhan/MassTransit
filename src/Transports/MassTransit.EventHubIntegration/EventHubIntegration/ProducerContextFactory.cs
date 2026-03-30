@@ -11,22 +11,20 @@ namespace MassTransit.EventHubIntegration
     {
         readonly IConnectionContextSupervisor _contextSupervisor;
         readonly string _eventHubName;
-        readonly ISerialization _serializers;
 
-        public ProducerContextFactory(IConnectionContextSupervisor contextSupervisor, string eventHubName, ISerialization serializers)
+        public ProducerContextFactory(IConnectionContextSupervisor contextSupervisor, string eventHubName)
         {
             _contextSupervisor = contextSupervisor;
             _eventHubName = eventHubName;
-            _serializers = serializers;
         }
 
-        public IActivePipeContextAgent<ProducerContext> CreateActiveContext(ISupervisor supervisor,
-            PipeContextHandle<ProducerContext> context, CancellationToken cancellationToken = new CancellationToken())
+        public IActivePipeContextAgent<ProducerContext> CreateActiveContext(ISupervisor supervisor, PipeContextHandle<ProducerContext> context,
+            CancellationToken cancellationToken)
         {
             return supervisor.AddActiveContext(context, CreateSharedConnection(context.Context, cancellationToken));
         }
 
-        IPipeContextAgent<ProducerContext> IPipeContextFactory<ProducerContext>.CreateContext(ISupervisor supervisor)
+        public IPipeContextAgent<ProducerContext> CreateContext(ISupervisor supervisor)
         {
             IAsyncPipeContextAgent<ProducerContext> asyncContext = supervisor.AddAsyncContext<ProducerContext>();
 
@@ -48,11 +46,13 @@ namespace MassTransit.EventHubIntegration
             Task<ProducerContext> Create(ConnectionContext connectionContext, CancellationToken createCancellationToken)
             {
                 var client = connectionContext.CreateEventHubClient(_eventHubName);
-                ProducerContext context = new EventHubProducerContext(client, _serializers, cancellationToken);
+                ProducerContext context = new EventHubProducerContext(client, createCancellationToken);
                 return Task.FromResult(context);
             }
 
+            #pragma warning disable CS4014
             _contextSupervisor.CreateAgent(asyncContext, Create, cancellationToken);
+            #pragma warning restore CS4014
         }
     }
 }

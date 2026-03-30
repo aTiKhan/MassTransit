@@ -3,14 +3,13 @@
     using System;
     using System.Collections.Generic;
     using System.Threading.Tasks;
-    using MassTransit.Saga;
     using NUnit.Framework;
 
 
     public class SagaConfigurationObserver_Specs
     {
         readonly TestStateMachine _machine;
-        readonly InMemorySagaRepository<Instance> _repository;
+        readonly ISagaRepository<Instance> _repository;
 
         public SagaConfigurationObserver_Specs()
         {
@@ -29,7 +28,7 @@
 
                 cfg.ReceiveEndpoint("hello", e =>
                 {
-                    e.UseRetry(x => x.Immediate(1));
+                    e.UseMessageRetry(x => x.Immediate(1));
 
                     e.StateMachineSaga(_machine, _repository, x =>
                     {
@@ -44,10 +43,13 @@
                 });
             });
 
-            Assert.That(observer.SagaTypes.Contains(typeof(Instance)));
-            Assert.That(observer.StateMachineTypes.Contains(typeof(TestStateMachine)));
-            Assert.That(observer.MessageTypes.Contains(Tuple.Create(typeof(Instance), typeof(Start))));
-            Assert.That(observer.MessageTypes.Contains(Tuple.Create(typeof(Instance), typeof(Stop))));
+            Assert.Multiple(() =>
+            {
+                Assert.That(observer.SagaTypes, Does.Contain(typeof(Instance)));
+                Assert.That(observer.StateMachineTypes, Does.Contain(typeof(TestStateMachine)));
+                Assert.That(observer.MessageTypes, Does.Contain(Tuple.Create(typeof(Instance), typeof(Start))));
+            });
+            Assert.That(observer.MessageTypes, Does.Contain(Tuple.Create(typeof(Instance), typeof(Stop))));
         }
 
 

@@ -19,19 +19,36 @@ namespace MassTransit.Tests.MessageData
         {
             IRequestClient<ProcessPayload> client = CreateRequestClient<ProcessPayload>();
 
-            var payload = new SpecialPayload { Value = "Something special" };
-
+            var payload = new SpecialPayload
+            {
+                Value = "Something special",
+                Dictionary = new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["string"] = "Some string",
+                    ["bool_true"] = true,
+                    ["bool_false"] = false,
+                }
+            };
             var streamBytes = new byte[1000];
-            await using var ms = new MemoryStream(streamBytes);
+            using var ms = new MemoryStream(streamBytes);
 
             Response<PayloadProcessed> response = await client.GetResponse<PayloadProcessed>(new { Payload = payload }, TestCancellationToken,
                 RequestTimeout.After(s: 5));
 
             Assert.That(response.Message.Payload, Is.Not.Null);
-            Assert.That(response.Message.Payload.HasValue, Is.True);
-            Assert.That(response.Message.Payload.Address, Is.EqualTo(_payloadAddress), "Should use the existing message data address");
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.Message.Payload.HasValue, Is.True);
+                Assert.That(response.Message.Payload.Address, Is.EqualTo(_payloadAddress), "Should use the existing message data address");
+            });
             var responsePayload = await response.Message.Payload.Value;
-            Assert.That(responsePayload.Value, Is.EqualTo(payload.Value));
+            Assert.Multiple(() =>
+            {
+                Assert.That(responsePayload.Value, Is.EqualTo(payload.Value));
+                Assert.That(responsePayload.Dictionary.ContainsKey("string"), Is.EqualTo(true)); // will pass
+                Assert.That(responsePayload.Dictionary.ContainsKey("bool_true"), Is.EqualTo(true)); // Will pass
+                Assert.That(responsePayload.Dictionary.ContainsKey("bool_false"), Is.EqualTo(true)); // Will fail
+            });
         }
 
         protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
@@ -63,6 +80,7 @@ namespace MassTransit.Tests.MessageData
         public class SpecialPayload
         {
             public string Value { get; set; }
+            public System.Collections.Generic.IDictionary<string, object> Dictionary { get; set; }
         }
 
 

@@ -3,6 +3,7 @@ namespace MassTransit.KafkaIntegration.Serializers
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Text;
     using Confluent.Kafka;
     using Transports;
 
@@ -28,7 +29,14 @@ namespace MassTransit.KafkaIntegration.Serializers
         {
             public IHeaderProvider Deserialize(Headers headers)
             {
-                return new DictionaryHeaderProvider(headers.ToDictionary(x => x.Key, x => (object)MessageDefaults.Encoding.GetString(x.GetValueBytes())));
+                var dictionary = headers.GroupBy(header => header.Key)
+                                 .ToDictionary(group => group.Key, group =>
+                                 {
+                                     var valueBytes = group.First().GetValueBytes();
+                                     return valueBytes != null ? (object)Encoding.UTF8.GetString(valueBytes) : null;
+                                 });
+
+                return new DictionaryHeaderProvider(dictionary);
             }
         }
 
@@ -46,6 +54,9 @@ namespace MassTransit.KafkaIntegration.Serializers
             public Headers Serialize(SendContext context)
             {
                 var dictionary = new Dictionary<string, Header>();
+
+                foreach (var headerValue in context.Headers)
+                    _adapter.Set(dictionary, headerValue);
 
                 if (context.MessageId.HasValue)
                     _adapter.Set(dictionary, nameof(MessageContext.MessageId), context.MessageId.Value);
@@ -67,9 +78,6 @@ namespace MassTransit.KafkaIntegration.Serializers
 
                 if (context.ContentType != null)
                     _adapter.Set(dictionary, MessageHeaders.ContentType, context.ContentType.ToString());
-
-                foreach (var headerValue in context.Headers)
-                    _adapter.Set(dictionary, headerValue);
 
                 var headers = new Headers();
                 foreach (var value in dictionary.Values)

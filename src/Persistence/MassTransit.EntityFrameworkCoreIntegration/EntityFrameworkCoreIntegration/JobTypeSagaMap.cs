@@ -1,7 +1,5 @@
 namespace MassTransit.EntityFrameworkCoreIntegration
 {
-    using System;
-    using System.Collections.Generic;
     using Microsoft.EntityFrameworkCore;
     using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -18,6 +16,8 @@ namespace MassTransit.EntityFrameworkCoreIntegration
 
         protected override void Configure(EntityTypeBuilder<JobTypeSaga> entity, ModelBuilder model)
         {
+            entity.OptOutOfEntityFrameworkConventions();
+
             entity.Property(x => x.CurrentState);
 
             entity.Ignore(x => x.Version);
@@ -32,17 +32,20 @@ namespace MassTransit.EntityFrameworkCoreIntegration
 
             entity.Property(x => x.ActiveJobCount);
             entity.Property(x => x.ConcurrentJobLimit);
+            entity.Property(x => x.GlobalConcurrentJobLimit);
+            entity.Property(x => x.Name);
 
             entity.Property(x => x.OverrideJobLimit);
             entity.Property(x => x.OverrideLimitExpiration);
 
             entity.Property(x => x.ActiveJobs)
-                .HasConversion(new JsonValueConverter<List<ActiveJob>>())
-                .Metadata.SetValueComparer(new JsonValueComparer<List<ActiveJob>>());
+                .HasJsonConversion();
 
             entity.Property(x => x.Instances)
-                .HasConversion(new JsonValueConverter<Dictionary<Uri, JobTypeInstance>>())
-                .Metadata.SetValueComparer(new JsonValueComparer<Dictionary<Uri, JobTypeInstance>>());
+                .HasJsonConversion();
+
+            entity.Property(x => x.Properties)
+                .HasJsonConversion();
         }
     }
 }

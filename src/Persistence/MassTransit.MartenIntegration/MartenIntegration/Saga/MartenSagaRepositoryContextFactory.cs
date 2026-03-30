@@ -10,7 +10,9 @@ namespace MassTransit.MartenIntegration.Saga
 
 
     public class MartenSagaRepositoryContextFactory<TSaga> :
-        ISagaRepositoryContextFactory<TSaga>
+        ISagaRepositoryContextFactory<TSaga>,
+        IQuerySagaRepositoryContextFactory<TSaga>,
+        ILoadSagaRepositoryContextFactory<TSaga>
         where TSaga : class, ISaga
     {
         readonly IDocumentStore _documentStore;
@@ -22,10 +24,22 @@ namespace MassTransit.MartenIntegration.Saga
             _factory = factory;
         }
 
+        public Task<T> Execute<T>(Func<LoadSagaRepositoryContext<TSaga>, Task<T>> asyncMethod, CancellationToken cancellationToken = default)
+            where T : class
+        {
+            return ExecuteAsyncMethod(asyncMethod, cancellationToken);
+        }
+
+        public Task<T> Execute<T>(Func<QuerySagaRepositoryContext<TSaga>, Task<T>> asyncMethod, CancellationToken cancellationToken)
+            where T : class
+        {
+            return ExecuteAsyncMethod(asyncMethod, cancellationToken);
+        }
+
         public async Task Send<T>(ConsumeContext<T> context, IPipe<SagaRepositoryContext<TSaga, T>> next)
             where T : class
         {
-            using var session = _documentStore.DirtyTrackedSession();
+            await using var session = _documentStore.DirtyTrackedSession();
 
             var sagaRepositoryContext = new MartenSagaRepositoryContext<TSaga, T>(session, context, _factory);
 
@@ -35,7 +49,7 @@ namespace MassTransit.MartenIntegration.Saga
         public async Task SendQuery<T>(ConsumeContext<T> context, ISagaQuery<TSaga> query, IPipe<SagaRepositoryQueryContext<TSaga, T>> next)
             where T : class
         {
-            using var session = _documentStore.DirtyTrackedSession();
+            await using var session = _documentStore.DirtyTrackedSession();
 
             var repositoryContext = new MartenSagaRepositoryContext<TSaga, T>(session, context, _factory);
 
@@ -49,10 +63,20 @@ namespace MassTransit.MartenIntegration.Saga
             await next.Send(queryContext).ConfigureAwait(false);
         }
 
-        public async Task<T> Execute<T>(Func<SagaRepositoryContext<TSaga>, Task<T>> asyncMethod, CancellationToken cancellationToken)
+        public void Probe(ProbeContext context)
+        {
+            context.Add("persistence", "marten");
+        }
+
+        async Task<T> ExecuteAsyncMethod<T>(Func<MartenSagaRepositoryContext<TSaga>, Task<T>> asyncMethod, CancellationToken cancellationToken)
             where T : class
         {
+
+#if NET6_0_OR_GREATER
+            var session = _documentStore.LightweightSession();
+#else
             var session = _documentStore.OpenSession();
+#endif
             try
             {
                 var repositoryContext = new MartenSagaRepositoryContext<TSaga>(session, cancellationToken);
@@ -63,11 +87,6 @@ namespace MassTransit.MartenIntegration.Saga
             {
                 session.Dispose();
             }
-        }
-
-        public void Probe(ProbeContext context)
-        {
-            context.Add("persistence", "marten");
         }
     }
 }

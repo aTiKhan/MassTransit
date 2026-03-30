@@ -7,11 +7,13 @@ namespace MassTransit.Configuration
     public class CombinedEndpointDefinition :
         IEndpointDefinition
     {
+        readonly IRegistrationContext _context;
         readonly IReadOnlyList<IEndpointDefinition> _definitions;
 
-        internal CombinedEndpointDefinition(IReadOnlyList<IEndpointDefinition> definitions)
+        internal CombinedEndpointDefinition(IReadOnlyList<IEndpointDefinition> definitions, IRegistrationContext context)
         {
             _definitions = definitions;
+            _context = context;
 
             if (_definitions.All(x => x.ConfigureConsumeTopology))
                 ConfigureConsumeTopology = true;
@@ -33,8 +35,13 @@ namespace MassTransit.Configuration
                 int? prefetch = default;
                 foreach (var definition in _definitions)
                 {
-                    if (definition.PrefetchCount.HasValue && definition.PrefetchCount.Value > prefetch)
-                        prefetch = definition.PrefetchCount.Value;
+                    if (definition.PrefetchCount.HasValue)
+                    {
+                        if (prefetch == null)
+                            prefetch = definition.PrefetchCount;
+                        else if (definition.PrefetchCount.Value > prefetch)
+                            prefetch = definition.PrefetchCount.Value;
+                    }
                 }
 
                 return prefetch;
@@ -48,8 +55,13 @@ namespace MassTransit.Configuration
                 int? concurrentMessageLimit = default;
                 foreach (var definition in _definitions)
                 {
-                    if (definition.ConcurrentMessageLimit.HasValue && definition.ConcurrentMessageLimit.Value > concurrentMessageLimit)
-                        concurrentMessageLimit = definition.ConcurrentMessageLimit.Value;
+                    if (definition.ConcurrentMessageLimit.HasValue)
+                    {
+                        if (concurrentMessageLimit == null)
+                            concurrentMessageLimit = definition.ConcurrentMessageLimit;
+                        else if (definition.ConcurrentMessageLimit.Value > concurrentMessageLimit)
+                            concurrentMessageLimit = definition.ConcurrentMessageLimit.Value;
+                    }
                 }
 
                 return concurrentMessageLimit;
@@ -63,11 +75,11 @@ namespace MassTransit.Configuration
             return _definitions.FirstOrDefault()?.GetEndpointName(formatter);
         }
 
-        public void Configure<T>(T configurator)
+        public void Configure<T>(T configurator, IRegistrationContext context)
             where T : IReceiveEndpointConfigurator
         {
             foreach (var definition in _definitions)
-                definition.Configure(configurator);
+                definition.Configure(configurator, context ?? _context);
         }
     }
 }

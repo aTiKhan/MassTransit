@@ -1,7 +1,6 @@
 namespace MassTransit
 {
     using System;
-    using Courier;
 
 
     public interface IExecuteActivityRegistrationConfigurator<TActivity, TArguments> :
@@ -15,5 +14,6 @@ namespace MassTransit
     public interface IExecuteActivityRegistrationConfigurator
     {
         void Endpoint(Action<IEndpointRegistrationConfigurator> configure);
+        void ExcludeFromConfigureEndpoints();
     }
 }

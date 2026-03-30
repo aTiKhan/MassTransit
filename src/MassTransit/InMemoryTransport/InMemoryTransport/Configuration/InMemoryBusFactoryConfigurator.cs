@@ -34,7 +34,7 @@ namespace MassTransit.InMemoryTransport.Configuration
             set { }
         }
 
-        public void Publish<T>(Action<IInMemoryMessagePublishTopologyConfigurator<T>> configureTopology)
+        public void Publish<T>(Action<IInMemoryMessagePublishTopologyConfigurator<T>>? configureTopology)
             where T : class
         {
             IInMemoryMessagePublishTopologyConfigurator<T> configurator = _busConfiguration.Topology.Publish.GetMessageTopology<T>();
@@ -42,14 +42,28 @@ namespace MassTransit.InMemoryTransport.Configuration
             configureTopology?.Invoke(configurator);
         }
 
-        public void Host(Action<IInMemoryHostConfigurator> configure)
+        public void Publish(Type messageType, Action<IInMemoryMessagePublishTopologyConfigurator>? configure = null)
+        {
+            var configurator = _busConfiguration.Topology.Publish.GetMessageTopology(messageType);
+
+            configure?.Invoke(configurator);
+        }
+
+        public void Host(Action<IInMemoryHostConfigurator>? configure)
         {
             configure?.Invoke(_hostConfiguration.Configurator);
         }
 
-        public void Host(Uri baseAddress, Action<IInMemoryHostConfigurator> configure)
+        public void Host(Uri baseAddress, Action<IInMemoryHostConfigurator>? configure)
         {
             _hostConfiguration.BaseAddress = baseAddress;
+
+            configure?.Invoke(_hostConfiguration.Configurator);
+        }
+
+        public void Host(string virtualHost, Action<IInMemoryHostConfigurator>? configure)
+        {
+            _hostConfiguration.BaseAddress = new UriBuilder(_hostConfiguration.HostAddress) { Path = virtualHost }.Uri;
 
             configure?.Invoke(_hostConfiguration.Configurator);
         }
@@ -76,11 +90,6 @@ namespace MassTransit.InMemoryTransport.Configuration
         public void ReceiveEndpoint(string queueName, Action<IReceiveEndpointConfigurator> configureEndpoint)
         {
             _hostConfiguration.ReceiveEndpoint(queueName, configureEndpoint);
-        }
-
-        public int TransportConcurrencyLimit
-        {
-            set => ConcurrentMessageLimit = value;
         }
     }
 }

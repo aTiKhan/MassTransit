@@ -13,14 +13,12 @@ namespace MassTransit.TestFramework
     using Util;
 
 
-    public abstract class InMemoryContainerTestFixture<TContainer>
-        where TContainer : ITestFixtureContainerFactory, new()
+    public abstract class InMemoryContainerTestFixture
     {
         static readonly TestOutputLoggerFactory LoggerFactory;
 
         static readonly bool _enableLog = !bool.TryParse(Environment.GetEnvironmentVariable("CI"), out var isBuildServer) || !isBuildServer;
         readonly List<Action<CancellationToken>> _cancellation;
-        readonly ITestFixtureContainerFactory _containerFactory;
         TestExecutionContext _fixtureContext;
         IServiceScope _serviceScope;
 
@@ -33,11 +31,11 @@ namespace MassTransit.TestFramework
 
         protected InMemoryContainerTestFixture()
         {
-            _containerFactory = new TContainer();
             _cancellation = new List<Action<CancellationToken>>();
         }
 
-        protected IServiceProvider ServiceProvider { get; private set; }
+        ServiceProvider _serviceProvider;
+        protected IServiceProvider ServiceProvider => _serviceProvider;
 
         protected IBusRegistrationContext BusRegistrationContext => ServiceProvider.GetRequiredService<IBusRegistrationContext>();
 
@@ -55,6 +53,8 @@ namespace MassTransit.TestFramework
         /// </summary>
         protected TimeSpan TestTimeout => InMemoryTestHarness.TestTimeout;
 
+        protected IEndpointNameFormatter EndpointNameFormatter => BusRegistrationContext.EndpointNameFormatter;
+
         [TearDown]
         public async Task ScopeTearDown()
         {
@@ -69,7 +69,8 @@ namespace MassTransit.TestFramework
         [OneTimeSetUp]
         public async Task ContainerFixtureOneTimeSetup()
         {
-            var collection = _containerFactory.CreateServiceCollection()
+        #pragma warning disable CS0618
+            var collection = new ServiceCollection()
                 .AddSingleton<ILoggerFactory>(provider => new TestOutputLoggerFactory(true))
                 .AddSingleton(typeof(ILogger<>), typeof(Logger<>))
                 .AddMassTransitInMemoryTestHarness(cfg =>
@@ -78,10 +79,11 @@ namespace MassTransit.TestFramework
 
                     ConfigureMassTransit(cfg);
                 });
+        #pragma warning restore CS0618
 
             collection = ConfigureServices(collection);
 
-            ServiceProvider = _containerFactory.BuildServiceProvider(collection);
+            _serviceProvider = collection.BuildServiceProvider();
 
             ConfigureLogging(ServiceProvider);
 
@@ -116,15 +118,9 @@ namespace MassTransit.TestFramework
 
             await InMemoryTestHarness.Stop().ConfigureAwait(false);
 
-            switch (ServiceProvider)
-            {
-                case IAsyncDisposable asyncDisposable:
-                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                    break;
-                case IDisposable disposable:
-                    disposable.Dispose();
-                    break;
-            }
+            InMemoryTestHarness.Dispose();
+
+            await _serviceProvider.DisposeAsync();
         }
 
         protected virtual void ConfigureMassTransit(IBusRegistrationConfigurator configurator)
@@ -163,13 +159,17 @@ namespace MassTransit.TestFramework
             return ServiceProvider.GetRequiredService<IClientFactory>();
         }
 
-        protected ISagaRepository<T> GetSagaRepository<T>()
+        protected ILoadSagaRepository<T> GetLoadSagaRepository<T>()
             where T : class, ISaga
         {
-            return ServiceProvider.GetRequiredService<ISagaRepository<T>>();
+            return ServiceProvider.GetRequiredService<ILoadSagaRepository<T>>();
         }
 
-        protected IEndpointNameFormatter EndpointNameFormatter => BusRegistrationContext.EndpointNameFormatter;
+        protected IQuerySagaRepository<T> GetQuerySagaRepository<T>()
+            where T : class, ISaga
+        {
+            return ServiceProvider.GetRequiredService<IQuerySagaRepository<T>>();
+        }
 
         protected async Task<Task<ConsumeContext<T>>> ConnectPublishHandler<T>()
             where T : class

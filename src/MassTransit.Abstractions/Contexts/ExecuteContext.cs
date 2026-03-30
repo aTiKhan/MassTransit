@@ -2,7 +2,6 @@
 {
     using System;
     using System.Collections.Generic;
-    using Courier;
 
 
     public interface ExecuteContext :
@@ -18,6 +17,13 @@
         /// </summary>
         /// <returns></returns>
         ExecutionResult Completed();
+
+        /// <summary>
+        /// Completes the execution, without passing a compensating log entry
+        /// </summary>
+        /// <param name="callback">Configure the routing slip options</param>
+        /// <returns></returns>
+        ExecutionResult Completed(ConfigureCompletedActivityOptionsCallback callback);
 
         /// <summary>
         /// Completes the execution, passing updated variables to the routing slip
@@ -46,9 +52,29 @@
         /// Completes the activity, passing a compensation log entry
         /// </summary>
         /// <typeparam name="TLog"></typeparam>
+        /// <param name="log"></param>
+        /// <param name="callback">Configure the routing slip options</param>
+        /// <returns></returns>
+        ExecutionResult Completed<TLog>(TLog log, ConfigureCompletedActivityOptionsCallback callback)
+            where TLog : class;
+
+        /// <summary>
+        /// Completes the activity, passing a compensation log entry
+        /// </summary>
+        /// <typeparam name="TLog"></typeparam>
         /// <param name="logValues">An object to initialize the log properties</param>
         /// <returns></returns>
         ExecutionResult Completed<TLog>(object logValues)
+            where TLog : class;
+
+        /// <summary>
+        /// Completes the activity, passing a compensation log entry
+        /// </summary>
+        /// <typeparam name="TLog"></typeparam>
+        /// <param name="logValues">An object to initialize the log properties</param>
+        /// <param name="callback">Configure the routing slip options</param>
+        /// <returns></returns>
+        ExecutionResult Completed<TLog>(object logValues, ConfigureCompletedActivityOptionsCallback callback)
             where TLog : class;
 
         /// <summary>
@@ -127,6 +153,14 @@
         /// <param name="exception"></param>
         /// <returns></returns>
         ExecutionResult Faulted(Exception exception);
+
+        /// <summary>
+        /// The activity Faulted, and compensation should be triggered
+        /// </summary>
+        /// <param name="exception"></param>
+        /// <param name="callback">Set additional options for the compensated activities</param>
+        /// <returns></returns>
+        ExecutionResult Faulted(Exception exception, ConfigureFaultedActivityOptionsCallback callback);
 
         /// <summary>
         /// The activity Faulted with no exception, but compensation should be triggered and passing additional variables to set on

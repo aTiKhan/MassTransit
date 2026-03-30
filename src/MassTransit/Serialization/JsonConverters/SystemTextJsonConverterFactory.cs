@@ -5,10 +5,13 @@
     using System.Reflection;
     using System.Text.Json;
     using System.Text.Json.Serialization;
+    using Batching;
+    using Contracts.JobService;
     using Courier.Contracts;
     using Courier.Messages;
     using Events;
     using Internals;
+    using JobService.Messages;
     using Metadata;
     using Scheduling;
 
@@ -21,6 +24,9 @@
         static readonly IDictionary<Type, Type> _openTypeFactory = new Dictionary<Type, Type>
         {
             { typeof(Fault<>), typeof(FaultEvent<>) },
+            { typeof(Batch<>), typeof(MessageBatch<>) },
+            { typeof(SubmitJob<>), typeof(SubmitJobCommand<>) },
+            { typeof(JobCompleted<>), typeof(JobCompletedEvent<>) },
         };
 
         static SystemTextJsonConverterFactory()
@@ -31,6 +37,11 @@
                 .Add<ExceptionInfo, FaultExceptionInfo>()
                 .Add<HostInfo, BusHostInfo>()
                 .Add<ScheduleMessage, ScheduleMessageCommand>()
+                .Add<ScheduleRecurringMessage, ScheduleRecurringMessageCommand>()
+                .Add<CancelScheduledMessage, CancelScheduledMessageCommand>()
+                .Add<CancelScheduledRecurringMessage, CancelScheduledRecurringMessageCommand>()
+                .Add<PauseScheduledRecurringMessage, PauseScheduledRecurringMessageCommand>()
+                .Add<ResumeScheduledRecurringMessage, ResumeScheduledRecurringMessageCommand>()
                 .Add<MessageEnvelope, JsonMessageEnvelope>()
                 .Add<RoutingSlip, RoutingSlipRoutingSlip>()
                 .Add<Activity, RoutingSlipActivity>()
@@ -46,44 +57,77 @@
                 .Add<RoutingSlipActivityCompensationFailed, RoutingSlipActivityCompensationFailedMessage>()
                 .Add<RoutingSlipCompensationFailed, RoutingSlipCompensationFailedMessage>()
                 .Add<RoutingSlipTerminated, RoutingSlipTerminatedMessage>()
-                .Add<RoutingSlipRevised, RoutingSlipRevisedMessage>();
+                .Add<RoutingSlipRevised, RoutingSlipRevisedMessage>()
+                .Add<RecurringJobSchedule, RecurringJobScheduleInfo>()
+                .Add<AllocateJobSlot, AllocateJobSlotCommand>()
+                .Add<CancelJob, CancelJobCommand>()
+                .Add<CancelJobAttempt, CancelJobAttemptCommand>()
+                .Add<CompleteJob, CompleteJobCommand>()
+                .Add<FaultJob, FaultJobCommand>()
+                .Add<FinalizeJob, FinalizeJobCommand>()
+                .Add<FinalizeJobAttempt, FinalizeJobAttemptCommand>()
+                .Add<GetJobAttemptStatus, GetJobAttemptStatusRequest>()
+                .Add<GetJobState, GetJobStateRequest>()
+                .Add<JobAttemptCanceled, JobAttemptCanceledEvent>()
+                .Add<JobAttemptCompleted, JobAttemptCompletedEvent>()
+                .Add<JobAttemptFaulted, JobAttemptFaultedEvent>()
+                .Add<JobAttemptStarted, JobAttemptStartedEvent>()
+                .Add<JobCanceled, JobCanceledEvent>()
+                .Add<JobCompleted, JobCompletedEvent>()
+                .Add<JobFaulted, JobFaultedEvent>()
+                .Add<JobRetryDelayElapsed, JobRetryDelayElapsedEvent>()
+                .Add<JobSlotAllocated, JobSlotAllocatedResponse>()
+                .Add<JobSlotReleased, JobSlotReleasedEvent>()
+                .Add<JobSlotUnavailable, JobSlotUnavailableResponse>()
+                .Add<JobSlotWaitElapsed, JobSlotWaitElapsedEvent>()
+                .Add<JobState, JobStateResponse>()
+                .Add<JobStarted, JobStartedEvent>()
+                .Add<JobStatusCheckRequested, JobStatusCheckRequestedEvent>()
+                .Add<JobSubmissionAccepted, JobSubmissionAcceptedResponse>()
+                .Add<JobSubmitted, JobSubmittedEvent>()
+                .Add<RetryJob, RetryJobCommand>()
+                .Add<RunJob, RunJobCommand>()
+                .Add<SaveJobState, SaveJobStateCommand>()
+                .Add<SetConcurrentJobLimit, SetConcurrentJobLimitCommand>()
+                .Add<SetJobProgress, SetJobProgressCommand>()
+                .Add<StartJob, StartJobCommand>()
+                .Add<StartJobAttempt, StartJobAttemptCommand>();
         }
 
         public override bool CanConvert(Type typeToConvert)
         {
-            var typeInfo = typeToConvert.GetTypeInfo();
-
-            if (typeInfo.IsGenericType)
+            if (typeToConvert.IsGenericType)
             {
-                if (typeInfo.ClosesType(typeof(IDictionary<,>), out Type[] elementTypes)
-                    || typeInfo.ClosesType(typeof(IReadOnlyDictionary<,>), out elementTypes)
-                    || typeInfo.ClosesType(typeof(Dictionary<,>), out elementTypes)
-                    || typeInfo.ClosesType(typeof(IEnumerable<>), out Type[] enumerableType)
-                    && enumerableType[0].ClosesType(typeof(KeyValuePair<,>), out elementTypes))
+                if (typeToConvert.ClosesType(typeof(IDictionary<,>), out Type[] elementTypes)
+                    || typeToConvert.ClosesType(typeof(IReadOnlyDictionary<,>), out elementTypes)
+                    || typeToConvert.ClosesType(typeof(Dictionary<,>), out elementTypes)
+                    || (typeToConvert.ClosesType(typeof(IEnumerable<>), out Type[] enumerableType)
+                        && enumerableType[0].ClosesType(typeof(KeyValuePair<,>), out elementTypes)
+                        && elementTypes[1] == typeof(object)
+                        && !typeToConvert.ClosesType(typeof(IReadOnlyList<>))))
                 {
                     var keyType = elementTypes[0];
-                    var valueType = elementTypes[1];
 
                     if (keyType != typeof(string) && keyType != typeof(Uri))
                         return false;
 
-                    if (typeInfo.IsFSharpType())
+                    if (typeToConvert.IsFSharpType())
                         return false;
 
                     return true;
                 }
             }
 
-            if (!typeInfo.IsInterface)
+            if (!typeToConvert.IsInterface)
                 return false;
 
-            if (_converterFactory.TryGetValue(typeInfo, out Func<JsonConverter> _))
+            if (_converterFactory.TryGetValue(typeToConvert, out Func<JsonConverter> _))
                 return true;
 
-            if (_openTypeFactory.TryGetValue(typeInfo, out _))
+            if (_openTypeFactory.TryGetValue(typeToConvert, out _))
                 return true;
 
-            if (typeToConvert.IsInterfaceOrConcreteClass() && MessageTypeCache.IsValidMessageType(typeToConvert) && !typeToConvert.IsValueTypeOrObject())
+            if (IsConvertibleInterfaceType(typeToConvert))
                 return true;
 
             return false;
@@ -91,14 +135,12 @@
 
         public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options)
         {
-            var typeInfo = typeToConvert.GetTypeInfo();
-
-            if (_converterFactory.TryGetValue(typeInfo, out Func<JsonConverter> converterFactory))
+            if (_converterFactory.TryGetValue(typeToConvert, out Func<JsonConverter> converterFactory))
                 return converterFactory();
 
-            if (typeInfo.IsGenericType)
+            if (typeToConvert.IsGenericType)
             {
-                if (!typeInfo.IsFSharpType())
+                if (!typeToConvert.IsFSharpType())
                 {
                     if (typeToConvert == typeof(IDictionary<string, object>))
                         return new CaseInsensitiveDictionaryStringObjectJsonConverter<IDictionary<string, object>>();
@@ -109,11 +151,12 @@
                     if (typeToConvert == typeof(IEnumerable<KeyValuePair<string, object>>))
                         return new CaseInsensitiveDictionaryStringObjectJsonConverter<IEnumerable<KeyValuePair<string, object>>>();
 
-                    if (typeInfo.ClosesType(typeof(IDictionary<,>), out Type[] elementTypes)
-                        || typeInfo.ClosesType(typeof(IReadOnlyDictionary<,>), out elementTypes)
-                        || typeInfo.ClosesType(typeof(Dictionary<,>), out elementTypes)
-                        || (typeInfo.ClosesType(typeof(IEnumerable<>), out Type[] enumerableTypes)
-                            && enumerableTypes[0].ClosesType(typeof(KeyValuePair<,>), out elementTypes)))
+                    if (typeToConvert.ClosesType(typeof(IDictionary<,>), out Type[] elementTypes)
+                        || typeToConvert.ClosesType(typeof(IReadOnlyDictionary<,>), out elementTypes)
+                        || typeToConvert.ClosesType(typeof(Dictionary<,>), out elementTypes)
+                        || (typeToConvert.ClosesType(typeof(IEnumerable<>), out Type[] enumerableTypes)
+                            && enumerableTypes[0].ClosesType(typeof(KeyValuePair<,>), out elementTypes)
+                            && elementTypes[1] == typeof(object)))
                     {
                         if (elementTypes[0] == typeof(string))
                         {
@@ -130,13 +173,13 @@
                 }
             }
 
-            if (typeInfo.IsGenericType && !typeInfo.IsGenericTypeDefinition)
+            if (typeToConvert.IsGenericType && !typeToConvert.IsGenericTypeDefinition)
             {
-                var interfaceType = typeInfo.GetGenericTypeDefinition();
+                var interfaceType = typeToConvert.GetGenericTypeDefinition();
 
                 if (_openTypeFactory.TryGetValue(interfaceType, out var concreteType))
                 {
-                    Type[] arguments = typeInfo.GetGenericArguments();
+                    Type[] arguments = typeToConvert.GetGenericArguments();
 
                     if (arguments.Length == 1 && !arguments[0].IsGenericParameter)
                     {
@@ -148,13 +191,37 @@
                 }
             }
 
-            if (typeToConvert.IsInterfaceOrConcreteClass() && MessageTypeCache.IsValidMessageType(typeToConvert) && !typeToConvert.IsValueTypeOrObject())
+            if (IsConvertibleInterfaceType(typeToConvert))
             {
                 return (JsonConverter)Activator.CreateInstance(
                     typeof(InterfaceJsonConverter<,>).MakeGenericType(typeToConvert, TypeMetadataCache.GetImplementationType(typeToConvert)));
             }
 
-            throw new MassTransitException($"Unsupported type for json serialization {TypeCache.GetShortName(typeInfo)}");
+            throw new MassTransitException($"Unsupported type for json serialization {TypeCache.GetShortName(typeToConvert)}");
+        }
+
+        static bool IsConvertibleInterfaceType(Type typeToConvert)
+        {
+            if (!typeToConvert.IsInterfaceOrConcreteClass())
+                return false;
+
+            if (!MessageTypeCache.IsValidMessageType(typeToConvert))
+                return false;
+
+            if (typeToConvert.IsValueTypeOrObject())
+                return false;
+
+            foreach (var attribute in typeToConvert.GetCustomAttributes())
+            {
+                switch (attribute.GetType().Name)
+                {
+                    case "JsonDerivedTypeAttribute":
+                    case "JsonPolymorphicAttribute":
+                        return false;
+                }
+            }
+
+            return true;
         }
     }
 

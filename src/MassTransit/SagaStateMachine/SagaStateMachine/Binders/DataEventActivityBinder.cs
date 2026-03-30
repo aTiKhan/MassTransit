@@ -3,11 +3,12 @@ namespace MassTransit.SagaStateMachine
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using Configuration;
 
 
     public class DataEventActivityBinder<TInstance, TData> :
         EventActivityBinder<TInstance, TData>
-        where TInstance : class, ISaga
+        where TInstance : class, SagaStateMachineInstance
         where TData : class
     {
         readonly IActivityBinder<TInstance>[] _activities;
@@ -18,7 +19,7 @@ namespace MassTransit.SagaStateMachine
         public DataEventActivityBinder(StateMachine<TInstance> machine, Event<TData> @event, params IActivityBinder<TInstance>[] activities)
         {
             _event = @event;
-            _activities = activities ?? Array.Empty<IActivityBinder<TInstance>>();
+            _activities = activities ?? [];
             _machine = machine;
         }
 
@@ -26,7 +27,7 @@ namespace MassTransit.SagaStateMachine
             params IActivityBinder<TInstance>[] activities)
         {
             _event = @event;
-            _activities = activities ?? Array.Empty<IActivityBinder<TInstance>>();
+            _activities = activities ?? [];
             _machine = machine;
             _filter = filter;
         }
@@ -68,16 +69,34 @@ namespace MassTransit.SagaStateMachine
             return new DataEventActivityBinder<TInstance, TData>(_machine, _event, _filter, _activities, activityBinder);
         }
 
+        public EventActivityBinder<TInstance, TData> Retry(Action<IRetryConfigurator> configure,
+            Func<EventActivityBinder<TInstance, TData>, EventActivityBinder<TInstance, TData>> activityCallback)
+        {
+            var configurator = new BehaviorContextRetryConfigurator();
+            configure(configurator);
+
+            if (configurator.PolicyFactory == null)
+                throw new ConfigurationException("A retry policy must be specified");
+
+            EventActivityBinder<TInstance, TData> activityBinder = GetBinder(activityCallback);
+
+            var retryPolicy = configurator.GetRetryPolicy();
+
+            var binder = new RetryActivityBinder<TInstance, TData>(_event, retryPolicy, activityBinder);
+
+            return new DataEventActivityBinder<TInstance, TData>(_machine, _event, _filter, _activities, binder);
+        }
+
         EventActivityBinder<TInstance, TData> EventActivityBinder<TInstance, TData>.If(StateMachineCondition<TInstance, TData> condition,
             Func<EventActivityBinder<TInstance, TData>, EventActivityBinder<TInstance, TData>> activityCallback)
         {
-            return IfElse(condition, activityCallback, _ => _);
+            return IfElse(condition, activityCallback, b => b);
         }
 
         EventActivityBinder<TInstance, TData> EventActivityBinder<TInstance, TData>.IfAsync(StateMachineAsyncCondition<TInstance, TData> condition,
             Func<EventActivityBinder<TInstance, TData>, EventActivityBinder<TInstance, TData>> activityCallback)
         {
-            return IfElseAsync(condition, activityCallback, _ => _);
+            return IfElseAsync(condition, activityCallback, b => b);
         }
 
         public EventActivityBinder<TInstance, TData> IfElse(StateMachineCondition<TInstance, TData> condition,
@@ -133,10 +152,7 @@ namespace MassTransit.SagaStateMachine
             EventActivityBinder<TInstance, TData> thenBinder = new DataEventActivityBinder<TInstance, TData>(_machine, _event, _activities);
             EventActivityBinder<TInstance, TData> elseBinder = new DataEventActivityBinder<TInstance, TData>(_machine, _event);
 
-            var conditionBinder = new ConditionalActivityBinder<TInstance, TData>(_event, context => _filter(context), thenBinder,
-                elseBinder);
-
-            return conditionBinder;
+            return new ConditionalActivityBinder<TInstance, TData>(_event, context => _filter(context), thenBinder, elseBinder);
         }
     }
 }

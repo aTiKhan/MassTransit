@@ -1,7 +1,6 @@
 namespace MassTransit.DependencyInjection.Registration
 {
     using System;
-    using Futures;
 
 
     public class RequestConsumerFutureDefinition<TFuture, TConsumer, TRequest, TResponse, TFault> :
@@ -27,10 +26,11 @@ namespace MassTransit.DependencyInjection.Registration
             _requestDefinition?.RequestAddress ??
             throw new ConfigurationException($"The consumer definition was not a FutureConsumerDefinition: {TypeCache<TConsumer>.ShortName}");
 
-        protected override void ConfigureSaga(IReceiveEndpointConfigurator endpointConfigurator, ISagaConfigurator<FutureState> sagaConfigurator)
+        protected override void ConfigureSaga(IReceiveEndpointConfigurator endpointConfigurator, ISagaConfigurator<FutureState> sagaConfigurator,
+            IRegistrationContext context)
         {
             endpointConfigurator.UseMessageRetry(r => r.Intervals(100, 200, 500, 1000, 5000, 10000));
-            endpointConfigurator.UseInMemoryOutbox();
+            endpointConfigurator.UseInMemoryOutbox(context);
         }
     }
 

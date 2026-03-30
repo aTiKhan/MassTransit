@@ -2,20 +2,23 @@
 {
     using System;
     using System.Threading.Tasks;
-    using MassTransit.Testing;
     using NUnit.Framework;
+    using NUnit.Framework.Internal;
     using TestFramework;
+    using Testing;
 
 
-    public class AmazonSqsTestFixture :
+    public abstract class AmazonSqsTestFixture :
         BusTestFixture
     {
-        public AmazonSqsTestFixture()
+        TestExecutionContext _fixtureContext;
+
+        protected AmazonSqsTestFixture()
             : this(new AmazonSqsTestHarness())
         {
         }
 
-        public AmazonSqsTestFixture(AmazonSqsTestHarness harness)
+        protected AmazonSqsTestFixture(AmazonSqsTestHarness harness)
             : base(harness)
         {
             AmazonSqsTestHarness = harness;
@@ -46,15 +49,24 @@
         protected Uri BusAddress => AmazonSqsTestHarness.BusAddress;
 
         [OneTimeSetUp]
-        public Task SetupInMemoryTestFixture()
+        public async Task SetupInMemoryTestFixture()
         {
-            return AmazonSqsTestHarness.Start();
+            _fixtureContext = TestExecutionContext.CurrentContext;
+
+            LoggerFactory.Current = _fixtureContext;
+
+
+            await AmazonSqsTestHarness.Start();
         }
 
         [OneTimeTearDown]
-        public Task TearDownInMemoryTestFixture()
+        public async Task TearDownInMemoryTestFixture()
         {
-            return AmazonSqsTestHarness.Stop();
+            LoggerFactory.Current = _fixtureContext;
+
+            await AmazonSqsTestHarness.Stop();
+
+            AmazonSqsTestHarness.Dispose();
         }
 
         protected virtual void ConfigureAmazonSqsHost(IAmazonSqsHostConfigurator configurator)

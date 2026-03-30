@@ -2,7 +2,6 @@ namespace MassTransit.Abstractions.Tests.Usage
 {
     using System;
     using System.Threading.Tasks;
-    using Courier;
 
 
     public class ProcessOrderActivity :
@@ -32,12 +31,14 @@ namespace MassTransit.Abstractions.Tests.Usage
         }
 
         protected override void ConfigureExecuteActivity(IReceiveEndpointConfigurator endpointConfigurator,
-            IExecuteActivityConfigurator<ProcessOrderActivity, ProcessOrderArguments> executeActivityConfigurator)
+            IExecuteActivityConfigurator<ProcessOrderActivity, ProcessOrderArguments> executeActivityConfigurator,
+            IRegistrationContext context)
         {
         }
 
         protected override void ConfigureCompensateActivity(IReceiveEndpointConfigurator endpointConfigurator,
-            ICompensateActivityConfigurator<ProcessOrderActivity, ProcessOrderLog> compensateActivityConfigurator)
+            ICompensateActivityConfigurator<ProcessOrderActivity, ProcessOrderLog> compensateActivityConfigurator,
+            IRegistrationContext context)
         {
         }
     }

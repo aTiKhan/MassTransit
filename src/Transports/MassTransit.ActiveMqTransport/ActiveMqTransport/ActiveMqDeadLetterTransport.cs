@@ -2,14 +2,16 @@
 {
     using System.Threading.Tasks;
     using Apache.NMS;
+    using Middleware;
+    using Topology;
     using Transports;
 
 
     public class ActiveMqDeadLetterTransport :
-        ActiveMqMoveTransport,
+        ActiveMqMoveTransport<DeadLetterSettings>,
         IDeadLetterTransport
     {
-        public ActiveMqDeadLetterTransport(string destination, IFilter<SessionContext> topologyFilter)
+        public ActiveMqDeadLetterTransport(Queue destination, ConfigureActiveMqTopologyFilter<DeadLetterSettings> topologyFilter)
             : base(destination, topologyFilter)
         {
         }

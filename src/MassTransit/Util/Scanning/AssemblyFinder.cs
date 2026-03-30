@@ -5,8 +5,6 @@
     using System.IO;
     using System.Linq;
     using System.Reflection;
-    using Context;
-    using Logging;
 
 
     public class AssemblyFinder
@@ -28,7 +26,7 @@
             if (Path.IsPathRooted(binPath))
                 return FindAssemblies(binPath, loadFailure, includeExeFiles, filter);
 
-            string[] binPaths = binPath.Split(';');
+            var binPaths = binPath.Split(';');
             return binPaths.SelectMany(bin =>
             {
                 var path = Path.Combine(assemblyPath, bin);
@@ -63,10 +61,10 @@
                     continue;
                 }
 
-                Assembly assembly = null;
+                Assembly loadedAssembly = null;
                 try
                 {
-                    assembly = Assembly.ReflectionOnlyLoad(name);
+                    loadedAssembly = Assembly.Load(name);
                 }
                 catch (BadImageFormatException exception)
                 {
@@ -74,12 +72,11 @@
 
                     continue;
                 }
-
                 catch (Exception originalException)
                 {
                     try
                     {
-                        assembly = Assembly.ReflectionOnlyLoad(file);
+                        loadedAssembly = Assembly.Load(file);
                     }
                     catch (Exception)
                     {
@@ -87,34 +84,8 @@
                     }
                 }
 
-                if (assembly != null)
-                {
-                    Assembly loadedAssembly = null;
-                    try
-                    {
-                        loadedAssembly = Assembly.Load(name);
-                    }
-                    catch (BadImageFormatException exception)
-                    {
-                        LogContext.Warning?.Log(exception, "Assembly Scan failed: {Name}", name);
-
-                        continue;
-                    }
-                    catch (Exception originalException)
-                    {
-                        try
-                        {
-                            loadedAssembly = Assembly.Load(file);
-                        }
-                        catch (Exception)
-                        {
-                            loadFailure(file, originalException);
-                        }
-                    }
-
-                    if (loadedAssembly != null)
-                        yield return loadedAssembly;
-                }
+                if (loadedAssembly != null)
+                    yield return loadedAssembly;
             }
         }
     }

@@ -2,12 +2,12 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.SlowConcurrentSaga
 {
     using System;
     using System.Linq;
+    using System.Text;
     using System.Threading.Tasks;
     using DataAccess;
     using Events;
     using NUnit.Framework;
     using Shared;
-    using Shouldly;
     using Testing;
 
 
@@ -21,8 +21,6 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.SlowConcurrentSaga
         [Test]
         public async Task Two_Initiating_Messages_Deadlock_Results_In_One_Instance()
         {
-            var activityMonitor = Bus.CreateBusActivityMonitor(TimeSpan.FromMilliseconds(3000));
-
             var sagaId = NewId.NextGuid();
             var message = new Begin { CorrelationId = sagaId };
 
@@ -30,7 +28,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.SlowConcurrentSaga
 
             Guid? foundId = await _sagaRepository.Value.ShouldContainSaga(message.CorrelationId, TestTimeout);
 
-            foundId.HasValue.ShouldBe(true);
+            Assert.That(foundId, Is.Not.Null);
 
             var slowMessage = new IncrementCounterSlowly { CorrelationId = sagaId };
             await Task.WhenAll(
@@ -39,7 +37,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.SlowConcurrentSaga
 
             _sagaTestHarness.Consumed.Select<IncrementCounterSlowly>().Take(2).ToList();
 
-            await activityMonitor.AwaitBusInactivity(TestTimeout);
+            await InactivityTask;
 
             await _sagaRepository.Value.ShouldContainSagaInState(s => s.CorrelationId == sagaId && s.Counter == 2, _machine, _machine.DidIncrement,
                 TestTimeout);
@@ -51,8 +49,10 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.SlowConcurrentSaga
 
         public SlowConcurrentSaga_Specs()
         {
+            TestInactivityTimeout = TimeSpan.FromSeconds(3);
+
             // rowlock statements that don't work to cause a deadlock.
-            var notWorkingRowLockStatements = new SqlLockStatementProvider("dbo", "SELECT * FROM \"{1}\" WHERE \"CorrelationId\" = @p0");
+            var notWorkingRowLockStatements = new SqlLockStatementProvider("dbo", new NoLockStatementFormatter());
 
             // add new migration by calling
             // dotnet ef migrations add --context "SagaDbContext``2" Init  -v
@@ -85,6 +85,33 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Tests.SlowConcurrentSaga
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
             configurator.ConcurrentMessageLimit = 16;
+        }
+
+
+        class NoLockStatementFormatter :
+            ILockStatementFormatter
+        {
+            public void Create(StringBuilder sb, string schema, string table)
+            {
+                sb.AppendFormat("SELECT * FROM \"{0}\" WHERE ", table);
+            }
+
+            public void AppendColumn(StringBuilder sb, int index, string columnName)
+            {
+                if (index == 0)
+                    sb.AppendFormat("\"{0}\" = @p0", columnName);
+                else
+                    sb.AppendFormat(" AND \"{0}\" = @p{1}", columnName, index);
+            }
+
+            public void Complete(StringBuilder sb)
+            {
+            }
+
+            public void CreateOutboxStatement(StringBuilder sb, string schema, string table, string columnName)
+            {
+                throw new NotImplementedException();
+            }
         }
     }
 }

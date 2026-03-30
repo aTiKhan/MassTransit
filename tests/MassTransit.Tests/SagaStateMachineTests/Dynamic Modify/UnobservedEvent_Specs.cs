@@ -3,8 +3,6 @@
     using System;
     using System.Linq;
     using System.Threading.Tasks;
-    using Automatonymous;
-    using Introspection;
     using NUnit.Framework;
 
 
@@ -28,8 +26,8 @@
         class Instance :
             SagaStateMachineInstance
         {
-            public Guid CorrelationId { get; set; }
             public State CurrentState { get; set; }
+            public Guid CorrelationId { get; set; }
         }
 
 
@@ -69,9 +67,9 @@
         class Instance :
             SagaStateMachineInstance
         {
-            public Guid CorrelationId { get; set; }
             public State CurrentState { get; set; }
             public int Volts { get; set; }
+            public Guid CorrelationId { get; set; }
         }
 
 
@@ -111,7 +109,7 @@
 
             await _machine.RaiseEvent(instance, Charge, new A { Volts = 12 });
 
-            Assert.AreEqual(0, instance.Volts);
+            Assert.That(instance.Volts, Is.EqualTo(0));
         }
 
         [Test]
@@ -121,11 +119,11 @@
 
             await _machine.RaiseEvent(instance, Start);
 
-            Assert.AreEqual(Running, await _machine.GetState(instance));
+            Assert.That(await _machine.GetState(instance), Is.EqualTo(Running));
 
             var nextEvents = await _machine.NextEvents(instance);
 
-            Assert.IsTrue(nextEvents.Any(x => x.Name.Equals("Charge")));
+            Assert.That(nextEvents.Any(x => x.Name.Equals("Charge")), Is.True);
         }
 
         [Test]
@@ -147,9 +145,9 @@
         class Instance :
             SagaStateMachineInstance
         {
-            public Guid CorrelationId { get; set; }
             public State CurrentState { get; set; }
             public int Volts { get; set; }
+            public Guid CorrelationId { get; set; }
         }
 
 
@@ -197,8 +195,8 @@
         class Instance :
             SagaStateMachineInstance
         {
-            public Guid CorrelationId { get; set; }
             public State CurrentState { get; set; }
+            public Guid CorrelationId { get; set; }
         }
 
 

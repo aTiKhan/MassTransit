@@ -3,11 +3,11 @@
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Text.Json.Serialization;
     using System.Threading.Tasks;
     using MassTransit.Courier.Contracts;
     using MassTransit.Testing;
     using NUnit.Framework;
-    using Shouldly;
     using TestFramework;
     using TestFramework.Courier;
 
@@ -52,13 +52,11 @@
 
             if (faulted.Status == TaskStatus.RanToCompletion)
             {
-                Assert.Fail("Failed due to exception {0}", faulted.Result.Message.ActivityExceptions.Any()
-                    ? faulted.Result.Message.ActivityExceptions.First()
-                        .ExceptionInfo.Message
-                    : "VisitUnknownFilter");
+                Assert.Fail(
+                    $"Failed due to exception {(faulted.Result.Message.ActivityExceptions.Any() ? faulted.Result.Message.ActivityExceptions.First().ExceptionInfo.Message : "VisitUnknownFilter")}");
             }
 
-            completed.Status.ShouldBe(TaskStatus.RanToCompletion);
+            Assert.That(completed.Status, Is.EqualTo(TaskStatus.RanToCompletion));
         }
 
         int _intValue;
@@ -77,6 +75,109 @@
                 () => new ObjectGraphTestActivity(_intValue, _stringValue, _decimalValue, new[] { "Albert", "Chris" }, _argumentsDictionary));
             AddActivityContext<TestActivity, TestArguments, TestLog>(
                 () => new TestActivity());
+        }
+    }
+
+
+    [TestFixture]
+    public class Nullable_value_types_in_routing_slip_arguments :
+        InMemoryActivityTestFixture
+    {
+        [Test]
+        public async Task Should_not_lose_their_default_value()
+        {
+            Task<ConsumeContext<RoutingSlipCompleted>> completed = await ConnectPublishHandler<RoutingSlipCompleted>();
+            Task<ConsumeContext<RoutingSlipFaulted>> faulted = await ConnectPublishHandler<RoutingSlipFaulted>();
+
+            await InputQueueSendEndpoint.Send(new Message { Payload = new List<SomeClass> { new SomeClass { Enumeration = AnEnumeration.DefaultValue } } });
+
+            await Task.WhenAny(completed, faulted);
+
+            if (faulted.Status == TaskStatus.RanToCompletion)
+            {
+                Assert.Fail(
+                    $"Failed due to exception {(faulted.Result.Message.ActivityExceptions.Any() ? faulted.Result.Message.ActivityExceptions.First().ExceptionInfo.Message : "VisitUnknownFilter")}");
+            }
+
+            Assert.That(completed.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+        }
+
+        protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
+        {
+            configurator.ConfigureJsonSerializerOptions(j =>
+            {
+                j.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+                return j;
+            });
+        }
+
+        protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
+        {
+            configurator.Consumer(() => new AConsumer(GetActivityContext<AnActivity>()));
+        }
+
+        protected override void SetupActivities(BusTestHarness testHarness)
+        {
+            AddActivityContext<AnActivity, Argument>(() => new AnActivity());
+        }
+
+
+        public class AConsumer :
+            IConsumer<Message>
+        {
+            readonly ActivityTestContext _activityTestContext;
+
+            public AConsumer(ActivityTestContext activityTestContext)
+            {
+                _activityTestContext = activityTestContext;
+            }
+
+            public Task Consume(ConsumeContext<Message> context)
+            {
+                var routingSlip = new RoutingSlipBuilder(Guid.NewGuid());
+                var arg = new Argument { Payload = context.Message.Payload };
+                routingSlip.AddActivity(_activityTestContext.Name, _activityTestContext.ExecuteUri, arg);
+                return context.Execute(routingSlip.Build());
+            }
+        }
+
+
+        public class AnActivity : IExecuteActivity<Argument>
+        {
+            public Task<ExecutionResult> Execute(ExecuteContext<Argument> context)
+            {
+                AnEnumeration? shouldNotBeNull = context.Arguments.Payload?.FirstOrDefault()?.Enumeration;
+
+                if (shouldNotBeNull.HasValue)
+                    return Task.FromResult(context.Completed());
+
+                throw new ArgumentNullException(nameof(context), "Enumeration was null");
+            }
+        }
+
+
+        public class Message
+        {
+            public List<SomeClass> Payload { get; set; }
+        }
+
+
+        public class Argument
+        {
+            public List<SomeClass> Payload { get; set; }
+        }
+
+
+        public class SomeClass
+        {
+            public AnEnumeration? Enumeration { get; set; }
+        }
+
+
+        public enum AnEnumeration
+        {
+            DefaultValue,
+            OtherValue
         }
     }
 }
